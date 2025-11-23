@@ -1,0 +1,41 @@
+[package]
+name = "zcash-t2o-ffi"
+version = "0.1.0"
+edition = "2021"
+authors = ["Suffix Labs"]
+description = "Rust FFI wrapper for Zcash transparent-to-Orchard PCZT operations"
+license = "MIT OR Apache-2.0"
+
+# Build as a C-compatible static library and cdylib for CGO
+[lib]
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+# Zcash core dependencies from librustzcash
+# These provide the actual Orchard cryptographic operations
+zcash_primitives = "0.15"
+orchard = "0.8"
+zcash_proofs = "0.15"
+
+# PCZT implementation
+pczt = { path = "../../../../../librustzcash/pczt" }
+
+# Serialization
+postcard = { version = "1.0", features = ["alloc"] }
+
+# Error handling
+thiserror = "1.0"
+
+# FFI helpers
+libc = "0.2"
+
+[profile.release]
+# Optimize for size and performance
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+# Faster compilation during development
+opt-level = 0
