@@ -17,8 +17,15 @@ zcash_primitives = "0.15"
 orchard = "0.8"
 zcash_proofs = "0.15"
 
-# PCZT implementation
-pczt = { path = "../../../../../librustzcash/pczt" }
+# Curve operations
+pasta_curves = "0.5"
+group = "0.13"
+
+# RedPallas signatures
+reddsa = "0.5"
+
+# Note encryption
+zcash_note_encryption = "0.4"
 
 # Serialization
 postcard = { version = "1.0", features = ["alloc"] }
@@ -28,6 +35,12 @@ thiserror = "1.0"
 
 # FFI helpers
 libc = "0.2"
+
+# Hex encoding for debugging
+hex = "0.4"
+
+# Random number generation
+rand = "0.8"
 
 [profile.release]
 # Optimize for size and performance
