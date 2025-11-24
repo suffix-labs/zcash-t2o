@@ -320,17 +320,146 @@ All placeholder functions in `pkg/ffi/rust/src/lib.rs` have comments showing the
 
 ## Testing
 
-Testing framework is in place. Test implementation pending:
+### Quick Start
 
 ```bash
-# Run all tests
-go test ./...
+# 1. Build Rust FFI library
+cd pkg/ffi/rust
+cargo build --release
+cd ../../..
 
-# Run specific package tests
+# 2. Run Rust unit tests
+cd pkg/ffi/rust
+cargo test
+cd ../../..
+
+# 3. Run Go tests (requires Rust library built)
+export CGO_LDFLAGS="-L${PWD}/pkg/ffi/rust/target/release"
+export LD_LIBRARY_PATH="${PWD}/pkg/ffi/rust/target/release:$LD_LIBRARY_PATH"
+go test ./...
+```
+
+### Rust FFI Tests
+
+Test the Rust library independently:
+
+```bash
+cd pkg/ffi/rust
+
+# Run all tests
+cargo test
+
+# Run specific test
+cargo test test_pallas_scalar_add
+
+# Test with output
+cargo test -- --nocapture
+
+# Check library was built
+ls -lh target/release/libzcash_t2o_ffi.*
+```
+
+Expected output:
+```
+running 2 tests
+test tests::test_error_handling ... ok
+test tests::test_pallas_scalar_add ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored
+```
+
+### Go FFI Bridge Tests
+
+Test the CGO integration:
+
+```bash
+# Create test file
+cat > pkg/ffi/bridge_test.go << 'EOF'
+package ffi
+
+import "testing"
+
+func TestPallasScalarAdd(t *testing.T) {
+    one := [32]byte{}
+    one[0] = 1
+
+    result, err := PallasScalarAdd(one, one)
+    if err != nil {
+        t.Fatalf("Failed: %v", err)
+    }
+
+    if result[0] != 2 {
+        t.Errorf("Expected 2, got %d", result[0])
+    }
+}
+
+func TestOrchardValueCommitment(t *testing.T) {
+    value := uint64(100000000)
+    rcv := [32]byte{1, 2, 3}
+
+    cv, err := OrchardValueCommitment(value, rcv)
+    if err != nil {
+        t.Fatalf("Failed: %v", err)
+    }
+
+    if len(cv) != 32 {
+        t.Errorf("Expected 32 bytes, got %d", len(cv))
+    }
+}
+EOF
+
+# Run FFI tests
+go test -v ./pkg/ffi
+```
+
+### API Integration Tests
+
+Test the public API:
+
+```bash
+# Run API tests
+go test -v ./pkg/api
+
+# Run all package tests
 go test ./pkg/pczt
 go test ./pkg/crypto
 go test ./pkg/roles
+go test ./pkg/zip321
+
+# Run all with coverage
+go test -cover ./...
 ```
+
+### Debugging FFI Issues
+
+If you encounter linking errors:
+
+```bash
+# Verify library symbols
+nm pkg/ffi/rust/target/release/libzcash_t2o_ffi.a | grep ffi_
+
+# Check CGO environment
+go env | grep CGO
+
+# Build with verbose CGO
+CGO_LDFLAGS="-L${PWD}/pkg/ffi/rust/target/release" \
+  go build -x ./pkg/ffi 2>&1 | grep -i link
+
+# On macOS, you might need:
+export DYLD_LIBRARY_PATH="${PWD}/pkg/ffi/rust/target/release"
+
+# On Linux:
+export LD_LIBRARY_PATH="${PWD}/pkg/ffi/rust/target/release"
+```
+
+### Test Coverage Areas
+
+Implemented tests:
+- ✅ Rust FFI error handling
+- ✅ Pallas scalar arithmetic
+- 🚧 Orchard note commitments
+- 🚧 Value commitments
+- 🚧 RedPallas signatures
 
 Planned test coverage:
 - Postcard serialization round-trip tests
