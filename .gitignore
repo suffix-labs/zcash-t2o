@@ -1,3 +1,6 @@
+.env
+.envrc
+
 # Rust build files
 pkg/ffi/rust/target/
 pkg/ffi/bindings.h
