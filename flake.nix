@@ -15,8 +15,10 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             go
+            gopls
             rustc
             cargo
+            rust-analyzer
             pkg-config
             gcc
           ];
