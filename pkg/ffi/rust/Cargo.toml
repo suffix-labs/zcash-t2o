@@ -48,6 +48,9 @@ rand = "0.8"
 # Constant-time operations - force version to match librustzcash
 subtle = "2.6"
 
+[build-dependencies]
+cbindgen = "0.27"
+
 [profile.release]
 # Optimize for size and performance
 opt-level = 3
