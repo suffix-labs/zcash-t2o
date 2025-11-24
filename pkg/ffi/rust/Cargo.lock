@@ -1269,6 +1269,7 @@ dependencies = [
  "postcard",
  "rand",
  "reddsa",
+ "subtle",
  "thiserror 1.0.69",
  "zcash_note_encryption",
  "zcash_primitives",

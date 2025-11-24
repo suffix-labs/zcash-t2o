@@ -10,30 +10,26 @@
 //!   - RedPallas signatures for spend authorization and binding
 //!   - Pallas curve arithmetic
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::c_char;
 use std::ptr;
 use std::slice;
 
 // Orchard imports
 use orchard::{
-    keys::{EphemeralSecretKey, FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey},
-    note::{ExtractedNoteCommitment, Nullifier, RandomSeed, Rho},
-    note_encryption::OrchardDomain,
+    keys::{SpendAuthorizingKey, SpendingKey},
+    note::{ExtractedNoteCommitment, RandomSeed, Rho},
     value::{NoteValue, ValueCommitTrapdoor, ValueCommitment},
     Address, Note,
 };
 
 // Pallas curve imports
-use group::{ff::Field, Group, GroupEncoding};
+use group::ff::PrimeField;
 use pasta_curves::pallas;
 
 // RedPallas signatures
 use rand::rngs::OsRng;
-use reddsa::{orchard::SpendAuth, SigningKey, VerificationKey};
-
-// Note encryption
-use zcash_note_encryption::Domain;
+use reddsa::{orchard::SpendAuth, SigningKey};
 
 /// FFI error codes
 #[repr(C)]
@@ -56,6 +52,7 @@ pub struct FFIResult {
 }
 
 impl FFIResult {
+    #[allow(dead_code)]
     fn ok(data: Vec<u8>) -> Self {
         let len = data.len();
         let ptr = Box::into_raw(data.into_boxed_slice()) as *mut u8;
@@ -75,8 +72,8 @@ impl FFIResult {
     }
 }
 
-/// Thread-local storage for last error message
 thread_local! {
+    /// Thread-local storage for last error message
     static LAST_ERROR: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
 }
 
@@ -196,10 +193,25 @@ pub unsafe extern "C" fn ffi_orchard_note_commitment(
 
     // Parse recipient address (43 bytes: diversifier + pk_d)
     let recipient_bytes = slice::from_raw_parts(recipient, 43);
-    let address = match Address::from_raw_address_bytes(recipient_bytes) {
+    let mut recipient_arr = [0u8; 43];
+    recipient_arr.copy_from_slice(recipient_bytes);
+
+    let address = match Address::from_raw_address_bytes(&recipient_arr).into() {
         Some(addr) => addr,
         None => {
             set_last_error("Invalid Orchard address".to_string());
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
+
+    // Parse rho (nullifier base)
+    let rho_bytes = slice::from_raw_parts(rho, 32);
+    let mut rho_arr = [0u8; 32];
+    rho_arr.copy_from_slice(rho_bytes);
+    let rho_val: Rho = match Rho::from_bytes(&rho_arr).into() {
+        Some(r) => r,
+        None => {
+            set_last_error("Invalid rho value".to_string());
             return FFIErrorCode::OrchardCryptoFailed;
         }
     };
@@ -208,23 +220,16 @@ pub unsafe extern "C" fn ffi_orchard_note_commitment(
     let rseed_bytes = slice::from_raw_parts(rseed, 32);
     let mut rseed_arr = [0u8; 32];
     rseed_arr.copy_from_slice(rseed_bytes);
-    let random_seed = RandomSeed::from_bytes(rseed_arr, &Rho::from_bytes(rseed_arr).unwrap())
-        .expect("valid random seed");
-
-    // Parse rho (nullifier base)
-    let rho_bytes = slice::from_raw_parts(rho, 32);
-    let mut rho_arr = [0u8; 32];
-    rho_arr.copy_from_slice(rho_bytes);
-    let rho_val = match Rho::from_bytes(&rho_arr) {
-        Some(r) => r,
+    let random_seed: RandomSeed = match RandomSeed::from_bytes(rseed_arr, &rho_val).into() {
+        Some(rs) => rs,
         None => {
-            set_last_error("Invalid rho value".to_string());
+            set_last_error("Invalid random seed".to_string());
             return FFIErrorCode::OrchardCryptoFailed;
         }
     };
 
     // Parse value
-    let note_value = match NoteValue::from_raw(value) {
+    let note_value: NoteValue = match NoteValue::from_raw(value).into() {
         Some(v) => v,
         None => {
             set_last_error("Invalid note value".to_string());
@@ -233,8 +238,13 @@ pub unsafe extern "C" fn ffi_orchard_note_commitment(
     };
 
     // Create note
-    let note = Note::from_parts(address, note_value, rho_val, random_seed)
-        .expect("valid note parameters");
+    let note: Note = match Note::from_parts(address, note_value, rho_val, random_seed).into() {
+        Some(n) => n,
+        None => {
+            set_last_error("Invalid note parameters".to_string());
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
 
     // Compute commitment
     let cmx: ExtractedNoteCommitment = note.commitment().into();
@@ -258,26 +268,12 @@ pub unsafe extern "C" fn ffi_orchard_ephemeral_key(
         return FFIErrorCode::NullPointer;
     }
 
-    // Parse ephemeral secret key
-    let esk_bytes = slice::from_raw_parts(esk, 32);
-    let mut esk_arr = [0u8; 32];
-    esk_arr.copy_from_slice(esk_bytes);
+    // NOTE: EphemeralSecretKey and derive_public are private in the new API
+    // The ephemeral key derivation is now handled internally during note encryption
+    // For FFI purposes, we return an error indicating this is not supported directly
+    set_last_error("Ephemeral key derivation should be done during note encryption in new orchard API".to_string());
 
-    let esk_key = match EphemeralSecretKey::from_bytes(&esk_arr) {
-        Some(k) => k,
-        None => {
-            set_last_error("Invalid ephemeral secret key".to_string());
-            return FFIErrorCode::OrchardCryptoFailed;
-        }
-    };
-
-    // Derive public key
-    let epk = esk_key.derive_public(orchard::keys::DiversifierKey::from_bytes(esk_arr));
-
-    // Copy to output
-    ptr::copy_nonoverlapping(epk.to_bytes().as_ptr(), epk_out, 32);
-
-    FFIErrorCode::Ok
+    FFIErrorCode::OrchardCryptoFailed
 }
 
 /// Encrypt Orchard note
@@ -287,7 +283,7 @@ pub unsafe extern "C" fn ffi_orchard_ephemeral_key(
 #[no_mangle]
 pub unsafe extern "C" fn ffi_orchard_encrypt_note(
     recipient: *const u8,           // [43]
-    value: u64,
+    _value: u64,
     rseed: *const u8,               // [32]
     memo: *const u8,                // [512]
     esk: *const u8,                 // [32]
@@ -328,21 +324,15 @@ pub unsafe extern "C" fn ffi_orchard_value_commitment(
         return FFIErrorCode::NullPointer;
     }
 
-    // Parse value
-    let note_value = match NoteValue::from_raw(value) {
-        Some(v) => v,
-        None => {
-            set_last_error("Invalid note value".to_string());
-            return FFIErrorCode::OrchardCryptoFailed;
-        }
-    };
+    // Parse value (NoteValue::from_raw now returns NoteValue directly in newer API)
+    let note_value = NoteValue::from_raw(value);
 
     // Parse randomness
     let rcv_bytes = slice::from_raw_parts(rcv, 32);
     let mut rcv_arr = [0u8; 32];
     rcv_arr.copy_from_slice(rcv_bytes);
 
-    let rcv_trapdoor = match ValueCommitTrapdoor::from_bytes(rcv_arr) {
+    let rcv_trapdoor: ValueCommitTrapdoor = match ValueCommitTrapdoor::from_bytes(rcv_arr).into() {
         Some(t) => t,
         None => {
             set_last_error("Invalid value commitment randomness".to_string());
@@ -351,7 +341,10 @@ pub unsafe extern "C" fn ffi_orchard_value_commitment(
     };
 
     // Compute value commitment
-    let cv = ValueCommitment::derive(note_value, rcv_trapdoor);
+    // ValueSum can be created by subtracting two NoteValues (Sub returns ValueSum)
+    let zero = NoteValue::from_raw(0);
+    let value_sum = note_value - zero;
+    let cv: ValueCommitment = ValueCommitment::derive(value_sum, rcv_trapdoor);
 
     // Extract and copy to output
     let cv_bytes = cv.to_bytes();
@@ -374,45 +367,12 @@ pub unsafe extern "C" fn ffi_orchard_derive_nullifier(
         return FFIErrorCode::NullPointer;
     }
 
-    // Parse rho
-    let rho_bytes = slice::from_raw_parts(rho, 32);
-    let mut rho_arr = [0u8; 32];
-    rho_arr.copy_from_slice(rho_bytes);
+    // NOTE: Nullifier derivation internals (nk() and Nullifier::derive) are private in the new API
+    // Nullifiers should be derived from Note objects using note.nullifier()
+    // This standalone nullifier derivation is not supported in the public API
+    set_last_error("Nullifier derivation should be done from Note objects in new orchard API".to_string());
 
-    let rho_val = match Rho::from_bytes(&rho_arr) {
-        Some(r) => r,
-        None => {
-            set_last_error("Invalid rho value".to_string());
-            return FFIErrorCode::OrchardCryptoFailed;
-        }
-    };
-
-    // Parse spending key
-    let sk_bytes = slice::from_raw_parts(sk, 32);
-    let mut sk_arr = [0u8; 32];
-    sk_arr.copy_from_slice(sk_bytes);
-
-    let spending_key = match SpendingKey::from_bytes(sk_arr) {
-        Some(k) => k,
-        None => {
-            set_last_error("Invalid spending key".to_string());
-            return FFIErrorCode::OrchardCryptoFailed;
-        }
-    };
-
-    // Derive full viewing key
-    let fvk = FullViewingKey::from(&spending_key);
-
-    // Derive nullifier
-    // Note: For dummy spends, we need to construct a proper note first
-    // This is a simplified version
-    let nk = *fvk.nk();
-    let nf = Nullifier::derive(&nk, rho_val, pallas::Base::ZERO);
-
-    // Copy to output
-    ptr::copy_nonoverlapping(nf.to_bytes().as_ptr(), nf_out, 32);
-
-    FFIErrorCode::Ok
+    FFIErrorCode::OrchardCryptoFailed
 }
 
 /// Derive Orchard randomized verification key
@@ -434,20 +394,24 @@ pub unsafe extern "C" fn ffi_orchard_randomized_key(
     let mut sk_arr = [0u8; 32];
     sk_arr.copy_from_slice(sk_bytes);
 
-    let spend_auth_key = match SpendAuthorizingKey::from_bytes(sk_arr) {
+    // SpendAuthorizingKey doesn't have from_bytes in newer version
+    // We need to derive it from a SpendingKey
+    let spending_key: SpendingKey = match SpendingKey::from_bytes(sk_arr).into() {
         Some(k) => k,
         None => {
-            set_last_error("Invalid spend authorizing key".to_string());
+            set_last_error("Invalid spending key".to_string());
             return FFIErrorCode::OrchardCryptoFailed;
         }
     };
+
+    let spend_auth_key = SpendAuthorizingKey::from(&spending_key);
 
     // Parse alpha (randomizer)
     let alpha_bytes = slice::from_raw_parts(alpha, 32);
     let mut alpha_arr = [0u8; 32];
     alpha_arr.copy_from_slice(alpha_bytes);
 
-    let alpha_scalar = match pallas::Scalar::from_repr(alpha_arr).into() {
+    let alpha_scalar: pallas::Scalar = match pallas::Scalar::from_repr(alpha_arr).into() {
         Some(s) => s,
         None => {
             set_last_error("Invalid alpha value".to_string());
@@ -458,8 +422,13 @@ pub unsafe extern "C" fn ffi_orchard_randomized_key(
     // Randomize the key
     let rk = spend_auth_key.randomize(&alpha_scalar);
 
+    // The randomize method returns orchard's internal SigningKey type
+    // We need to serialize it directly using the bytes method
+    // Since it's an internal type, we'll use the Into<[u8; 32]> trait
+    let rk_bytes: [u8; 32] = rk.into();
+
     // Copy to output
-    ptr::copy_nonoverlapping(rk.to_bytes().as_ptr(), rk_out, 32);
+    ptr::copy_nonoverlapping(rk_bytes.as_ptr(), rk_out, 32);
 
     FFIErrorCode::Ok
 }
@@ -483,7 +452,7 @@ pub unsafe extern "C" fn ffi_pallas_scalar_add(
     let mut a_arr = [0u8; 32];
     a_arr.copy_from_slice(a_bytes);
 
-    let scalar_a = match pallas::Scalar::from_repr(a_arr).into() {
+    let scalar_a: pallas::Scalar = match pallas::Scalar::from_repr(a_arr).into() {
         Some(s) => s,
         None => {
             set_last_error("Invalid scalar a".to_string());
@@ -496,7 +465,7 @@ pub unsafe extern "C" fn ffi_pallas_scalar_add(
     let mut b_arr = [0u8; 32];
     b_arr.copy_from_slice(b_bytes);
 
-    let scalar_b = match pallas::Scalar::from_repr(b_arr).into() {
+    let scalar_b: pallas::Scalar = match pallas::Scalar::from_repr(b_arr).into() {
         Some(s) => s,
         None => {
             set_last_error("Invalid scalar b".to_string());
