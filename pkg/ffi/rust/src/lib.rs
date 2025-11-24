@@ -311,16 +311,7 @@ pub unsafe extern "C" fn ffi_orchard_encrypt_note(
         return FFIErrorCode::NullPointer;
     }
 
-    // TODO: Implement note encryption using zcash_note_encryption
-    // This requires proper setup of OrchardDomain and note encryption
-    //
-    // For now, placeholder that fills with zeros (NOT SECURE)
-    set_last_error("Note encryption not yet fully implemented".to_string());
-
-    // Fill outputs with placeholder data (zeros - NOT SECURE)
-    ptr::write_bytes(enc_ciphertext_out, 0, 580);
-    ptr::write_bytes(out_ciphertext_out, 0, 80);
-
+    set_last_error("Note encryption not implemented: requires zcash_note_encryption with OrchardDomain setup".to_string());
     FFIErrorCode::OrchardCryptoFailed
 }
 
@@ -554,32 +545,8 @@ pub unsafe extern "C" fn ffi_reddsa_sign_binding(
         return FFIErrorCode::NullPointer;
     }
 
-    // Parse binding signature key
-    let bsk_bytes = slice::from_raw_parts(bsk, 32);
-    let mut bsk_arr = [0u8; 32];
-    bsk_arr.copy_from_slice(bsk_bytes);
-
-    // TODO: Use proper Binding signature type
-    // For now, use SpendAuth as placeholder
-    let signing_key = match SigningKey::<SpendAuth>::try_from(bsk_arr) {
-        Ok(k) => k,
-        Err(e) => {
-            set_last_error(format!("Invalid binding signature key: {}", e));
-            return FFIErrorCode::OrchardCryptoFailed;
-        }
-    };
-
-    // Parse sighash message
-    let sighash_bytes = slice::from_raw_parts(sighash, 32);
-
-    // Sign the message
-    let signature = signing_key.sign(&mut OsRng, sighash_bytes);
-
-    // Copy signature to output (64 bytes)
-    let sig_bytes: [u8; 64] = signature.into();
-    ptr::copy_nonoverlapping(sig_bytes.as_ptr(), sig_out, 64);
-
-    FFIErrorCode::Ok
+    set_last_error("Binding signature not implemented: requires proper Binding signature type from reddsa".to_string());
+    FFIErrorCode::OrchardCryptoFailed
 }
 
 #[cfg(test)]
