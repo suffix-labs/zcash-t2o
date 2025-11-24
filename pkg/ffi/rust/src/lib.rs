@@ -491,7 +491,8 @@ pub unsafe extern "C" fn ffi_pallas_scalar_add(
     let result = scalar_a + scalar_b;
 
     // Copy to output
-    ptr::copy_nonoverlapping(result.to_repr().as_ref().as_ptr(), result_out, 32);
+    let result_bytes = result.to_repr();
+    ptr::copy_nonoverlapping(result_bytes.as_ptr(), result_out, 32);
 
     FFIErrorCode::Ok
 }
@@ -584,6 +585,8 @@ pub unsafe extern "C" fn ffi_reddsa_sign_binding(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
+    use group::ff::Field;
 
     #[test]
     fn test_error_handling() {
@@ -624,11 +627,10 @@ mod tests {
     #[test]
     fn test_pczt_parse_and_serialize() {
         use pczt::roles::creator::Creator;
-        use zcash_protocol::consensus::BranchId;
 
         // Create a minimal PCZT using the Creator role
         let pczt = Creator::new(
-            BranchId::Nu6.into(),
+            0xC2D6D0B4,  // NU5 consensus branch ID
             10_000_000,  // expiry height
             133,         // coin type (mainnet)
             [0; 32],     // transparent anchor
