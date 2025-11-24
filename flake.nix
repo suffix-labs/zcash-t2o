@@ -16,9 +16,12 @@
           packages = with pkgs; [
             go
             gopls
+            golangci-lint-langserver
+            delve
             rustc
             cargo
             rust-analyzer
+            lldb
             pkg-config
             gcc
           ];
