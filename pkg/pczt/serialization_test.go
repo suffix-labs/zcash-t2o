@@ -248,9 +248,9 @@ func TestSerializeDeserialize(t *testing.T) {
 	}
 
 	// Deserialize
-	deserialized, err := Deserialize(serialized)
+	deserialized, err := Parse(serialized)
 	if err != nil {
-		t.Fatalf("Deserialize failed: %v", err)
+		t.Fatalf("Parse failed: %v", err)
 	}
 
 	// Verify key fields match
@@ -279,9 +279,9 @@ func checkRoundTrip(t *testing.T, pczt *PCZT) {
 	}
 
 	// Parse/deserialize
-	parsed, err := Deserialize(bytes1)
+	parsed, err := Parse(bytes1)
 	if err != nil {
-		t.Fatalf("Deserialization failed: %v", err)
+		t.Fatalf("Parse failed: %v", err)
 	}
 
 	// Second serialization

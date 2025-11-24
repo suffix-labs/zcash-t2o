@@ -85,7 +85,7 @@ func (f *SpendFinalizer) finalizeP2PKH(input *pczt.TransparentInput) error {
 
 	// Build scriptSig: <signature> <pubkey>
 	scriptSig := buildScriptSig(signature, pubkey[:])
-	input.ScriptSig = &scriptSig
+	input.ScriptSig = scriptSig
 
 	return nil
 }
@@ -120,7 +120,7 @@ func (f *SpendFinalizer) finalizeP2SH(input *pczt.TransparentInput) error {
 
 	// Build scriptSig: <sig1> <sig2> ... <redeemScript>
 	scriptSig := buildP2SHScriptSig(signatures, input.RedeemScript)
-	input.ScriptSig = &scriptSig
+	input.ScriptSig = scriptSig
 
 	return nil
 }

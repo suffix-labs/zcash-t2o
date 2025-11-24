@@ -139,12 +139,13 @@ type SaplingBundle struct {
 // cryptographic object. This provides better privacy by making the transaction
 // graph harder to analyze.
 type OrchardBundle struct {
-	Actions  []OrchardAction // List of spend+output pairs
-	Flags    uint8           // 0b00000011 = spends and outputs enabled (see Zcash protocol spec)
-	ValueSum ValueBalance    // Net value leaving/entering the Orchard pool
-	Anchor   [32]byte        // Merkle tree anchor (root of the note commitment tree)
-	ZkProof  []byte          // Zero-knowledge proof (set by Prover role)
-	Bsk      *[32]byte       // Binding signature private key (set by IO Finalizer, cleared before extraction)
+	Actions    []OrchardAction // List of spend+output pairs
+	Flags      uint8           // 0b00000011 = spends and outputs enabled (see Zcash protocol spec)
+	ValueSum   ValueBalance    // Net value leaving/entering the Orchard pool
+	Anchor     [32]byte        // Merkle tree anchor (root of the note commitment tree)
+	ZkProof    []byte          // Zero-knowledge proof (set by Prover role)
+	Bsk        *[32]byte       // Binding signature private key (set by IO Finalizer, cleared before extraction)
+	BindingSig *[64]byte       // Binding signature (set by Transaction Extractor)
 }
 
 // OrchardAction represents a combined spend + output.

@@ -214,8 +214,8 @@ func (e *TxExtractor) writeTransparentBundle(buf *bytes.Buffer) {
 
 		// ScriptSig
 		scriptSig := []byte{}
-		if input.ScriptSig != nil {
-			scriptSig = *input.ScriptSig
+		if len(input.ScriptSig) > 0 {
+			scriptSig = input.ScriptSig
 		}
 		writeCompactSize(buf, uint64(len(scriptSig)))
 		buf.Write(scriptSig)
@@ -333,11 +333,11 @@ func (e *TxExtractor) writeOrchardBundle(buf *bytes.Buffer) error {
 	}
 
 	// ZK proof
-	if e.pczt.Orchard.ZkProof == nil {
+	if len(e.pczt.Orchard.ZkProof) == 0 {
 		return fmt.Errorf("Orchard bundle missing ZK proof")
 	}
-	writeCompactSize(buf, uint64(len(*e.pczt.Orchard.ZkProof)))
-	buf.Write(*e.pczt.Orchard.ZkProof)
+	writeCompactSize(buf, uint64(len(e.pczt.Orchard.ZkProof)))
+	buf.Write(e.pczt.Orchard.ZkProof)
 
 	// Binding signature
 	if e.pczt.Orchard.BindingSig == nil {

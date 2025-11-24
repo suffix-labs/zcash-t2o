@@ -286,7 +286,7 @@ func exampleCompleteWorkflow() {
 	fmt.Printf("Sighash: %x\n", hex.EncodeToString(sighash[:]))
 
 	// Step 6: Sign
-	privateKey, _ := crypto.PrivateKeyFromWIF("KxYZ...") // TODO: Real key
+	privateKey, _ := crypto.ParsePrivateKeyWIF("KxYZ...") // TODO: Real key
 	signedBytes, err := api.AppendSignature(provedBytes, 0, privateKey)
 	if err != nil {
 		fmt.Printf("Signing failed: %v\n", err)

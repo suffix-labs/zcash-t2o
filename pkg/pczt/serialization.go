@@ -279,6 +279,14 @@ func encodeOrchardBundle(w io.Writer, ob *OrchardBundle) error {
 		w.Write(ob.Bsk[:])
 	}
 
+	// Option<[u8; 64]> for BindingSig
+	if ob.BindingSig == nil {
+		w.Write([]byte{0x00})
+	} else {
+		w.Write([]byte{0x01})
+		w.Write(ob.BindingSig[:])
+	}
+
 	return nil
 }
 
@@ -321,13 +329,13 @@ func encodeOrchardSpend(w io.Writer, os *OrchardSpend) error {
 	// Optional fields
 	encodeOption43(w, os.Recipient)
 	encodeOptionU64(w, os.Value)
-	encodeOption32(w, os.Rho)
-	encodeOption32(w, os.Rseed)
+	encodeOption32Bytes(w, os.Rho)
+	encodeOption32Bytes(w, os.Rseed)
 	encodeOption96(w, os.Fvk)
 	encodeOptionWitness(w, os.Witness)
-	encodeOption32(w, os.Alpha)
+	encodeOption32Bytes(w, os.Alpha)
 	encodeOptionZip32Derivation(w, os.Zip32Derivation)
-	encodeOption32(w, os.DummySk)
+	encodeOption32Bytes(w, os.DummySk)
 
 	// Proprietary map
 	encodeVarInt(w, uint64(len(os.Proprietary)))
@@ -349,8 +357,8 @@ func encodeOrchardOutput(w io.Writer, oo *OrchardOutput) error {
 	// Optional fields
 	encodeOption43(w, oo.Recipient)
 	encodeOptionU64(w, oo.Value)
-	encodeOption32(w, oo.Rseed)
-	encodeOption32(w, oo.Ock)
+	encodeOption32Bytes(w, oo.Rseed)
+	encodeOption32Bytes(w, oo.Ock)
 	encodeOptionZip32Derivation(w, oo.Zip32Derivation)
 	encodeOptionString(w, oo.UserAddress)
 
@@ -414,6 +422,15 @@ func encodeOptionU64(w io.Writer, opt *uint64) {
 }
 
 func encodeOption43(w io.Writer, opt *[43]byte) {
+	if opt == nil {
+		w.Write([]byte{0x00})
+	} else {
+		w.Write([]byte{0x01})
+		w.Write(opt[:])
+	}
+}
+
+func encodeOption32Bytes(w io.Writer, opt *[32]byte) {
 	if opt == nil {
 		w.Write([]byte{0x00})
 	} else {
@@ -906,6 +923,19 @@ func decodeOrchardBundle(r io.Reader, ob *OrchardBundle) error {
 			return err
 		}
 		ob.Bsk = &bsk
+	}
+
+	// Option<[u8; 64]> for BindingSig
+	var hasBindingSig [1]byte
+	if _, err := r.Read(hasBindingSig[:]); err != nil {
+		return err
+	}
+	if hasBindingSig[0] == 0x01 {
+		var bindingSig [64]byte
+		if _, err := io.ReadFull(r, bindingSig[:]); err != nil {
+			return err
+		}
+		ob.BindingSig = &bindingSig
 	}
 
 	return nil

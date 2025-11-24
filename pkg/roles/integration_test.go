@@ -23,7 +23,7 @@ func TestTransparentToOrchard(t *testing.T) {
 	// For testing, we'll use a known WIF key
 	// In production, this would come from the wallet
 	privateKeyWIF := "KxYPKw8xvJFDQz1qsVWqehDTx8VqnJvLqJr9iQxKhRgQqUx7YwMN" // Example testnet key
-	privateKey, err := crypto.PrivateKeyFromWIF(privateKeyWIF)
+	privateKey, err := crypto.ParsePrivateKeyWIF(privateKeyWIF)
 	if err != nil {
 		t.Skipf("Skipping test - need valid WIF key: %v", err)
 		return
@@ -125,7 +125,7 @@ func TestTransparentToOrchard(t *testing.T) {
 	if len(p.Orchard.Actions) > 0 {
 		// Set placeholder ZK proof (not cryptographically valid)
 		placeholderProof := make([]byte, 1000) // Approximate size
-		p.Orchard.ZkProof = &placeholderProof
+		p.Orchard.ZkProof = placeholderProof
 		t.Log("⚠️  Using placeholder ZK proof - proving not implemented yet")
 	}
 
@@ -191,7 +191,7 @@ func checkRoundTrip(t *testing.T, p *pczt.PCZT) {
 	}
 
 	// Deserialize
-	parsed, err := pczt.Deserialize(bytes1)
+	parsed, err := pczt.Parse(bytes1)
 	if err != nil {
 		t.Fatalf("Deserialization failed: %v", err)
 	}

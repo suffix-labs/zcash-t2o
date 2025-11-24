@@ -221,7 +221,7 @@ func ProveTransaction(pcztBytes []byte) ([]byte, error) {
 //   - Error if validation fails (nil = valid)
 func VerifyBeforeSigning(pcztBytes []byte) error {
 	// Deserialize PCZT
-	p, err := pczt.Deserialize(pcztBytes)
+	p, err := pczt.Parse(pcztBytes)
 	if err != nil {
 		return fmt.Errorf("invalid PCZT: %w", err)
 	}
@@ -294,7 +294,7 @@ func GetSighash(pcztBytes []byte, inputIndex uint32) ([32]byte, error) {
 	var sighash [32]byte
 
 	// Deserialize PCZT
-	p, err := pczt.Deserialize(pcztBytes)
+	p, err := pczt.Parse(pcztBytes)
 	if err != nil {
 		return sighash, fmt.Errorf("invalid PCZT: %w", err)
 	}
@@ -347,7 +347,7 @@ func AppendSignature(
 	privateKey *crypto.PrivateKey,
 ) ([]byte, error) {
 	// Deserialize PCZT
-	p, err := pczt.Deserialize(pcztBytes)
+	p, err := pczt.Parse(pcztBytes)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PCZT: %w", err)
 	}
@@ -400,7 +400,7 @@ func Combine(pcztBytesList [][]byte) ([]byte, error) {
 	// Deserialize all PCZTs
 	pczts := make([]*pczt.PCZT, len(pcztBytesList))
 	for i, pcztBytes := range pcztBytesList {
-		p, err := pczt.Deserialize(pcztBytes)
+		p, err := pczt.Parse(pcztBytes)
 		if err != nil {
 			return nil, fmt.Errorf("invalid PCZT %d: %w", i, err)
 		}
@@ -445,7 +445,7 @@ func Combine(pcztBytesList [][]byte) ([]byte, error) {
 //   - Error if finalization fails
 func FinalizeAndExtract(pcztBytes []byte) ([]byte, error) {
 	// Deserialize PCZT
-	p, err := pczt.Deserialize(pcztBytes)
+	p, err := pczt.Parse(pcztBytes)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PCZT: %w", err)
 	}
@@ -485,7 +485,7 @@ func FinalizeAndExtract(pcztBytes []byte) ([]byte, error) {
 //   - Parsed PCZT structure
 //   - Error if parsing fails
 func ParsePCZT(pcztBytes []byte) (*pczt.PCZT, error) {
-	return pczt.Deserialize(pcztBytes)
+	return pczt.Parse(pcztBytes)
 }
 
 // SerializePCZT serializes a PCZT to bytes.
