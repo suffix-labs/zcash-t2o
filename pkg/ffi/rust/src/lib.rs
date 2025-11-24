@@ -153,22 +153,36 @@ pub unsafe extern "C" fn ffi_prove_pczt(
     }
 
     // Convert to Rust slice
-    let _pczt_data = slice::from_raw_parts(pczt_bytes, pczt_len);
+    let pczt_data = slice::from_raw_parts(pczt_bytes, pczt_len);
 
-    // TODO: Implement PCZT proving
-    // This requires:
-    // 1. Deserializing the PCZT
-    // 2. Using zcash_proofs::prover::LocalProver to generate proofs
-    // 3. Attaching proofs to the PCZT
-    // 4. Serializing back to bytes
-    //
-    // Note: This requires the PCZT crate which isn't published yet
-    // For now, return error with helpful message
+    // Parse PCZT from bytes
+    let pczt = match pczt::Pczt::parse(pczt_data) {
+        Ok(p) => p,
+        Err(e) => {
+            set_last_error(format!("Failed to parse PCZT: {:?}", e));
+            return FFIResult::error(FFIErrorCode::InvalidPczt);
+        }
+    };
 
-    set_last_error(
-        "ffi_prove_pczt not yet implemented - requires pczt crate from librustzcash".to_string(),
-    );
-    FFIResult::error(FFIErrorCode::ProvingFailed)
+    // Use the Prover role to check if proving is needed
+    use pczt::roles::prover::Prover;
+
+    let prover = Prover::new(pczt);
+
+    // For now, we'll check if proving is needed but return an error
+    // because we need the proving key which must be loaded separately
+    if prover.requires_orchard_proof() {
+        set_last_error(
+            "PCZT requires Orchard proofs, but proving key not available in FFI yet".to_string()
+        );
+        return FFIResult::error(FFIErrorCode::ProvingFailed);
+    }
+
+    let pczt = prover.finish();
+
+    // Serialize back to bytes
+    let output = pczt.serialize();
+    FFIResult::ok(output)
 }
 
 // ============================================================================
@@ -604,6 +618,74 @@ mod tests {
             // Result should be 2
             let two = pallas::Scalar::from(2u64);
             assert_eq!(result, two.to_repr().as_ref());
+        }
+    }
+
+    #[test]
+    fn test_pczt_parse_and_serialize() {
+        use pczt::roles::creator::Creator;
+        use zcash_protocol::consensus::BranchId;
+
+        // Create a minimal PCZT using the Creator role
+        let pczt = Creator::new(
+            BranchId::Nu6.into(),
+            10_000_000,  // expiry height
+            133,         // coin type (mainnet)
+            [0; 32],     // transparent anchor
+            [0; 32],     // orchard anchor
+        ).build();
+
+        // Serialize it
+        let pczt_bytes = pczt.serialize();
+
+        println!("Created PCZT: {} bytes", pczt_bytes.len());
+
+        // Test FFI function
+        unsafe {
+            let result = ffi_prove_pczt(
+                pczt_bytes.as_ptr(),
+                pczt_bytes.len(),
+            );
+
+            // Should succeed (no proofs needed for empty PCZT)
+            assert_eq!(result.error_code, FFIErrorCode::Ok);
+            assert!(!result.data.is_null());
+            assert!(result.data_len > 0);
+
+            println!("FFI returned: {} bytes", result.data_len);
+
+            // Parse the result back
+            let result_slice = slice::from_raw_parts(result.data, result.data_len);
+            let parsed_pczt = pczt::Pczt::parse(result_slice);
+            assert!(parsed_pczt.is_ok(), "Failed to parse result PCZT");
+
+            // Free the result
+            ffi_free_bytes(result.data, result.data_len);
+        }
+    }
+
+    #[test]
+    fn test_pczt_invalid_bytes() {
+        unsafe {
+            let invalid_bytes = vec![0u8; 10];
+
+            let result = ffi_prove_pczt(
+                invalid_bytes.as_ptr(),
+                invalid_bytes.len(),
+            );
+
+            // Should fail with InvalidPczt error
+            assert_eq!(result.error_code, FFIErrorCode::InvalidPczt);
+            assert!(result.data.is_null());
+            assert_eq!(result.data_len, 0);
+
+            // Check error message
+            let err_msg = ffi_last_error_message();
+            assert!(!err_msg.is_null());
+            let msg = CStr::from_ptr(err_msg).to_string_lossy();
+            println!("Error message: {}", msg);
+            assert!(msg.contains("Failed to parse PCZT"));
+            ffi_free_string(err_msg);
         }
     }
 }
