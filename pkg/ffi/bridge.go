@@ -8,7 +8,8 @@
 //   - The Rust library must be built before using this package
 //
 // Build the Rust library:
-//   cd pkg/ffi/rust && cargo build --release
+//
+//	cd pkg/ffi/rust && cargo build --release
 //
 // The CGO directives below link against the compiled Rust library.
 package ffi
@@ -166,13 +167,10 @@ func ProvePCZT(pcztBytes []byte) ([]byte, error) {
 		return nil, fmt.Errorf("empty PCZT bytes")
 	}
 
-	// Call Rust FFI
 	result := C.ffi_prove_pczt(
 		(*C.uint8_t)(unsafe.Pointer(&pcztBytes[0])),
 		C.size_t(len(pcztBytes)),
 	)
-
-	// Check for errors
 	if result.error_code != C.FFI_OK {
 		return nil, getLastError(result.error_code)
 	}
