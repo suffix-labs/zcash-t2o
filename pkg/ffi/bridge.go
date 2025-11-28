@@ -17,7 +17,9 @@ package ffi
 /*
 #cgo LDFLAGS: -L${SRCDIR}/rust/target/release -lzcash_t2o_ffi
 #cgo darwin LDFLAGS: -framework Security -framework Foundation
+#cgo darwin LDFLAGS: -Wl,-rpath,${SRCDIR}/rust/target/release
 #cgo linux LDFLAGS: -ldl -lm
+#cgo linux LDFLAGS: -Wl,-rpath,${SRCDIR}/rust/target/release
 
 #include <stdlib.h>
 #include <stdint.h>

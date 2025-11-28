@@ -191,7 +191,7 @@ func cmdSign() {
 	fmt.Println()
 	fmt.Println("  // Get sighash")
 	fmt.Println("  sighash, _ := api.GetSighash(pcztBytes, 0)")
-	fmt.Println("  fmt.Printf(\"Sighash: %x\\n\", sighash)")
+	fmt.Printf("  fmt.Printf(\"Sighash: %%x\\n\", sighash)\n")
 	fmt.Println()
 	fmt.Println("  // Sign")
 	fmt.Println("  signedBytes, _ := api.AppendSignature(pcztBytes, 0, privateKey)")
@@ -220,7 +220,7 @@ func cmdExtract() {
 	fmt.Println("  txBytes, _ := api.FinalizeAndExtract(pcztBytes)")
 	fmt.Println()
 	fmt.Println("  // Display transaction hex")
-	fmt.Println("  fmt.Printf(\"Transaction: %x\\n\", txBytes)")
+	fmt.Printf("  fmt.Printf(\"Transaction: %%x\\n\", txBytes)\n")
 	fmt.Println()
 	fmt.Println("See pkg/api/api.go for full API documentation.")
 }

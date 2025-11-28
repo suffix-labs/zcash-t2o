@@ -31,12 +31,22 @@ This library provides a complete implementation of the PCZT workflow for creatin
 go get github.com/suffix-labs/zcash-t2o
 ```
 
-### Build Rust FFI
+### Build
+
+The project includes a Makefile for simplified building:
 
 ```bash
-cd pkg/ffi/rust
-cargo build --release
+# Build everything (Rust FFI + Go binary)
+make build
+
+# Or build just the Rust FFI library
+make build-rust
+
+# Or build just the Go binary (builds Rust first)
+make build-go
 ```
+
+The binary will be created at `bin/zcash-t2o`.
 
 ## Quick Start
 
@@ -323,21 +333,18 @@ All placeholder functions in `pkg/ffi/rust/src/lib.rs` have comments showing the
 ### Quick Start
 
 ```bash
-# 1. Build Rust FFI library
-cd pkg/ffi/rust
-cargo build --release
-cd ../../..
+# Run all tests (Rust + Go)
+make test
 
-# 2. Run Rust unit tests
-cd pkg/ffi/rust
-cargo test
-cd ../../..
+# Or run tests separately:
+make test-rust  # Rust unit tests only
+make test-go    # Go tests only
 
-# 3. Run Go tests (requires Rust library built)
-export CGO_LDFLAGS="-L${PWD}/pkg/ffi/rust/target/release"
-export LD_LIBRARY_PATH="${PWD}/pkg/ffi/rust/target/release:$LD_LIBRARY_PATH"
-go test ./...
+# Traditional approach still works:
+go test ./...   # All Go tests
 ```
+
+The Makefile automatically handles building the Rust library and setting up the correct library paths.
 
 ### Rust FFI Tests
 
@@ -518,12 +525,14 @@ cd zcash-t2o
 # Install Go dependencies
 go mod download
 
-# Build Rust FFI library
-cd pkg/ffi/rust
-cargo build --release
+# Build everything
+make build
 
 # Run tests
-go test ./...
+make test
+
+# For manual Go development, build Rust and show env vars:
+make dev
 ```
 
 ## License
