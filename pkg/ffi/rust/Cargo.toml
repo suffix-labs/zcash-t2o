@@ -48,6 +48,11 @@ rand = "0.8"
 # Constant-time operations - force version to match librustzcash
 subtle = "2.6"
 
+[dev-dependencies]
+zcash_primitives = { path = "/home/trbiv/Projects/privacy-szn/electric-coin-co/librustzcash/zcash_primitives" }
+zcash_protocol = { path = "/home/trbiv/Projects/privacy-szn/electric-coin-co/librustzcash/components/zcash_protocol" }
+zip32 = "0.2"
+
 [build-dependencies]
 cbindgen = "0.27"
 

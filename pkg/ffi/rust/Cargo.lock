@@ -1883,6 +1883,8 @@ dependencies = [
  "zcash_note_encryption",
  "zcash_primitives",
  "zcash_proofs",
+ "zcash_protocol",
+ "zip32",
 ]
 
 [[package]]
@@ -1984,7 +1986,9 @@ name = "zcash_protocol"
 version = "0.7.1"
 dependencies = [
  "core2",
+ "document-features",
  "hex",
+ "memuse",
  "zcash_encoding",
 ]
 
