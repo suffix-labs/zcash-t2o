@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/suffix-labs/zcash-t2o/pkg/ffi"
 	"github.com/suffix-labs/zcash-t2o/pkg/pczt"
 )
 
@@ -357,11 +358,11 @@ func (e *TxExtractor) writeOrchardBundle(buf *bytes.Buffer) error {
 
 // signBinding creates a RedPallas binding signature.
 //
-// TODO: Must be implemented via Orchard FFI
-// Corresponds to: reddsa::orchard::Binding::sign in librustzcash
-//
 // The binding signature proves the value balance is correct:
 //   sum(value_commitments) = value_balance * V + bsk * R
+//
+// This function calls into Rust FFI for the actual RedPallas signing.
+// Corresponds to: reddsa::orchard::Binding::sign in librustzcash
 //
 // Parameters:
 //   - bsk: Binding signature key (sum of all rcv values)
@@ -369,9 +370,13 @@ func (e *TxExtractor) writeOrchardBundle(buf *bytes.Buffer) error {
 //
 // Returns: 64-byte RedPallas signature
 func signBinding(bsk [32]byte, sighash [32]byte) [64]byte {
-	// PLACEHOLDER: Real implementation uses RedPallas signing
-	var sig [64]byte
-	// sig = RedPallasSign(bsk, sighash)
+	// Call Rust FFI to create RedPallas binding signature
+	sig, err := ffi.RedDSASignBinding(bsk, sighash)
+	if err != nil {
+		// This should not happen in normal operation since bsk is derived
+		// from valid scalar values during IO finalization
+		panic(fmt.Sprintf("binding signature failed: %v", err))
+	}
 	return sig
 }
 

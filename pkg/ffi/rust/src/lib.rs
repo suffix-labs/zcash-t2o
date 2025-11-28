@@ -30,7 +30,7 @@ use pasta_curves::pallas;
 
 // RedPallas signatures
 use rand::rngs::OsRng;
-use reddsa::{orchard::SpendAuth, SigningKey};
+use reddsa::{orchard::SpendAuth, orchard::Binding, SigningKey};
 
 // ============================================================================
 // Proving key initialization
@@ -559,20 +559,46 @@ pub unsafe extern "C" fn ffi_reddsa_sign_spend_auth(
 
 /// Create RedPallas binding signature
 ///
+/// The binding signature proves that the transaction is balanced (sum of inputs = sum of outputs)
+/// by signing with the binding signing key (bsk), which is derived from the sum of value commitment
+/// randomness values.
+///
 /// # Safety
 /// - All pointer parameters must point to valid arrays of the specified size
 #[no_mangle]
 pub unsafe extern "C" fn ffi_reddsa_sign_binding(
-    bsk: *const u8,            // [32]
-    sighash: *const u8,        // [32]
-    sig_out: *mut u8,          // [64]
+    bsk: *const u8,            // [32] binding signing key
+    sighash: *const u8,        // [32] transaction sighash
+    sig_out: *mut u8,          // [64] output signature
 ) -> FFIErrorCode {
     if bsk.is_null() || sighash.is_null() || sig_out.is_null() {
         return FFIErrorCode::NullPointer;
     }
 
-    set_last_error("Binding signature not implemented: requires proper Binding signature type from reddsa".to_string());
-    FFIErrorCode::OrchardCryptoFailed
+    // Parse binding signing key from bytes
+    let bsk_bytes = slice::from_raw_parts(bsk, 32);
+    let mut bsk_arr = [0u8; 32];
+    bsk_arr.copy_from_slice(bsk_bytes);
+
+    let signing_key = match SigningKey::<Binding>::try_from(bsk_arr) {
+        Ok(k) => k,
+        Err(e) => {
+            set_last_error(format!("Invalid binding signing key: {}", e));
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
+
+    // Parse sighash message
+    let sighash_bytes = slice::from_raw_parts(sighash, 32);
+
+    // Sign the transaction sighash with the binding key
+    let signature = signing_key.sign(&mut OsRng, sighash_bytes);
+
+    // Copy signature to output (64 bytes: R || s)
+    let sig_bytes: [u8; 64] = signature.into();
+    ptr::copy_nonoverlapping(sig_bytes.as_ptr(), sig_out, 64);
+
+    FFIErrorCode::Ok
 }
 
 #[cfg(test)]
@@ -754,5 +780,137 @@ mod tests {
         println!("\n✓ Test passed! The proving key is initialized and ready for actual proofs.");
         println!("Note: This test verifies the infrastructure works.");
         println!("Full end-to-end proving tests will be in the Go integration tests.");
+    }
+
+    #[test]
+    fn test_reddsa_sign_binding() {
+        use reddsa::{Signature, VerificationKey};
+        use group::ff::Field;
+
+        println!("\n=== Testing RedPallas binding signature ===\n");
+
+        unsafe {
+            // Generate a random binding signing key
+            let bsk = pallas::Scalar::random(&mut OsRng);
+            let bsk_bytes = bsk.to_repr();
+
+            // Create a test sighash
+            let sighash = [0x42u8; 32];
+
+            // Output buffer for signature
+            let mut sig_out = [0u8; 64];
+
+            // Call the FFI function
+            println!("Creating binding signature...");
+            let result = ffi_reddsa_sign_binding(
+                bsk_bytes.as_ptr(),
+                sighash.as_ptr(),
+                sig_out.as_mut_ptr(),
+            );
+
+            assert_eq!(result, FFIErrorCode::Ok, "Binding signature should succeed");
+            println!("✓ Signature created: {} bytes", sig_out.len());
+
+            // Verify the signature using reddsa directly
+            println!("Verifying signature...");
+
+            // Create signing key from the same bytes
+            let mut bsk_arr = [0u8; 32];
+            bsk_arr.copy_from_slice(&bsk_bytes);
+            let signing_key = SigningKey::<Binding>::try_from(bsk_arr)
+                .expect("Failed to create signing key");
+
+            // Get verification key
+            let vk = VerificationKey::<Binding>::from(&signing_key);
+
+            // Parse the signature
+            let signature = Signature::<Binding>::try_from(sig_out)
+                .expect("Failed to parse signature");
+
+            // Verify the signature
+            assert!(
+                vk.verify(&sighash, &signature).is_ok(),
+                "Signature should verify correctly"
+            );
+
+            println!("✓ Signature verified successfully!");
+        }
+    }
+
+    #[test]
+    fn test_reddsa_sign_binding_different_messages() {
+        println!("\n=== Testing binding signatures are unique per message ===\n");
+
+        use reddsa::{Signature, VerificationKey};
+        use group::ff::Field;
+
+        unsafe {
+            // Generate a binding signing key
+            let bsk = pallas::Scalar::random(&mut OsRng);
+            let bsk_bytes = bsk.to_repr();
+
+            // Create two different sighashes
+            let sighash1 = [0x42u8; 32];
+            let sighash2 = [0x43u8; 32];
+
+            let mut sig1 = [0u8; 64];
+            let mut sig2 = [0u8; 64];
+
+            // Sign both messages
+            ffi_reddsa_sign_binding(bsk_bytes.as_ptr(), sighash1.as_ptr(), sig1.as_mut_ptr());
+            ffi_reddsa_sign_binding(bsk_bytes.as_ptr(), sighash2.as_ptr(), sig2.as_mut_ptr());
+
+            // Signatures should be different
+            assert_ne!(sig1, sig2, "Signatures for different messages should differ");
+
+            // Both should verify with their respective messages
+            let mut bsk_arr = [0u8; 32];
+            bsk_arr.copy_from_slice(&bsk_bytes);
+            let signing_key = SigningKey::<Binding>::try_from(bsk_arr).unwrap();
+            let vk = VerificationKey::<Binding>::from(&signing_key);
+
+            let parsed_sig1 = Signature::<Binding>::try_from(sig1).unwrap();
+            let parsed_sig2 = Signature::<Binding>::try_from(sig2).unwrap();
+
+            assert!(vk.verify(&sighash1, &parsed_sig1).is_ok());
+            assert!(vk.verify(&sighash2, &parsed_sig2).is_ok());
+
+            // Cross-verification should fail
+            assert!(vk.verify(&sighash1, &parsed_sig2).is_err());
+            assert!(vk.verify(&sighash2, &parsed_sig1).is_err());
+
+            println!("✓ Signatures are correctly unique per message");
+        }
+    }
+
+    #[test]
+    fn test_reddsa_sign_binding_null_pointers() {
+        println!("\n=== Testing binding signature with null pointers ===\n");
+
+        unsafe {
+            let bsk = [1u8; 32];
+            let sighash = [0x42u8; 32];
+            let mut sig_out = [0u8; 64];
+
+            // Test null bsk
+            assert_eq!(
+                ffi_reddsa_sign_binding(ptr::null(), sighash.as_ptr(), sig_out.as_mut_ptr()),
+                FFIErrorCode::NullPointer
+            );
+
+            // Test null sighash
+            assert_eq!(
+                ffi_reddsa_sign_binding(bsk.as_ptr(), ptr::null(), sig_out.as_mut_ptr()),
+                FFIErrorCode::NullPointer
+            );
+
+            // Test null output
+            assert_eq!(
+                ffi_reddsa_sign_binding(bsk.as_ptr(), sighash.as_ptr(), ptr::null_mut()),
+                FFIErrorCode::NullPointer
+            );
+
+            println!("✓ Null pointer checks passed");
+        }
     }
 }

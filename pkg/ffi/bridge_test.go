@@ -84,6 +84,41 @@ func TestRedDSASignSpendAuth(t *testing.T) {
 	t.Logf("✓ RedDSA signature works: %d bytes", len(sig))
 }
 
+func TestRedDSASignBinding(t *testing.T) {
+	// Test binding signature creation
+	// In a real transaction, bsk is the sum of all rcv values
+	bsk := [32]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+		           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
+	sighash := [32]byte{0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+		                0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+		                0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+		                0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42}
+
+	sig, err := RedDSASignBinding(bsk, sighash)
+	if err != nil {
+		t.Fatalf("RedDSASignBinding failed: %v", err)
+	}
+
+	// Signature should be 64 bytes
+	if len(sig) != 64 {
+		t.Errorf("Expected 64 bytes, got %d", len(sig))
+	}
+
+	// Signature should not be all zeros
+	allZeros := true
+	for _, b := range sig {
+		if b != 0 {
+			allZeros = false
+			break
+		}
+	}
+	if allZeros {
+		t.Error("Binding signature is all zeros")
+	}
+
+	t.Logf("✓ RedDSA binding signature works: %d bytes", len(sig))
+}
+
 func TestFFIMemoryManagement(t *testing.T) {
 	// Test that we can call multiple FFI functions without leaks
 	for i := 0; i < 100; i++ {
