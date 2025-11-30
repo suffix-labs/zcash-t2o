@@ -1,8 +1,8 @@
 # Implementation Plan: Complete Zcash T2O PCZT Library
 
-**Current Status:** ~75% Complete
+**Current Status:** ~85% Complete
 **Target:** Production-ready implementation per PROBLEM_SPEC.md
-**Estimated Effort:** 2-3 days focused work
+**Last Updated:** 2025-11-30
 
 ---
 
@@ -10,102 +10,97 @@
 
 These are blocking issues that prevent creating valid, broadcastable transactions.
 
-### 1.1 Load Orchard Proving Key and Implement Proof Generation
+### 1.1 Load Orchard Proving Key and Implement Proof Generation ✅ COMPLETE
 
-**File:** `pkg/ffi/rust/src/lib.rs:174-179`
+**File:** `pkg/ffi/rust/src/lib.rs:165-212`
 
-**Current State:**
-```rust
-pub extern "C" fn ffi_prove_pczt(...) -> FFIResult {
-    FFIResult::error("proving key not available in FFI yet".to_string())
-}
-```
+**Status:** ✅ Fully implemented
+
+**Implementation:**
+- Proving key is built/cached via `orchard_proving_key()` using `ProvingKey::build()`
+- Proof generation uses `pczt::roles::prover::Prover` with `create_orchard_proof(pk)`
+- Handles PCZTs with no Orchard actions (no-op)
+- Error handling for parsing and proving failures
 
 **Tasks:**
-- [ ] Locate or download Orchard proving key (sapling-spend.params / orchard.params)
-- [ ] Add proving key loading to Rust FFI initialization
-- [ ] Implement proof generation using `orchard::builder::Builder` or `pczt` prover
-- [ ] Handle proving key path configuration (env var or embedded)
-- [ ] Add error handling for missing/corrupt proving key
+- [x] Locate or download Orchard proving key (built dynamically)
+- [x] Add proving key loading to Rust FFI initialization
+- [x] Implement proof generation using `pczt` prover role
+- [x] Handle proving key path configuration (built on demand, cached)
+- [x] Add error handling for missing/corrupt proving key
 
-**References:**
-- `zcash_proofs::prover::LocalTxProver`
-- Example: https://github.com/zcash/librustzcash/blob/main/zcash_proofs/src/prover.rs
-
-**Acceptance Criteria:**
+**Acceptance Criteria:** ✅ All met
 - `ffi_prove_pczt` successfully generates ZK proofs for Orchard actions
 - Proofs verify correctly
 - Error handling for invalid PCZT input
 
 ---
 
-### 1.2 Implement Binding Signature Creation
+### 1.2 Implement Binding Signature Creation ✅ COMPLETE (Rust FFI)
 
-**File:** `pkg/ffi/rust/src/lib.rs:539-550`
+**File:** `pkg/ffi/rust/src/lib.rs:569-602`
 
-**Current State:**
-```rust
-pub extern "C" fn ffi_reddsa_sign_binding(...) -> FFIResult {
-    FFIResult::error("binding signature not implemented yet".to_string())
-}
-```
+**Status:** ✅ Rust FFI fully implemented, Go wiring still needed
+
+**Implementation:**
+- Uses `reddsa::SigningKey::<Binding>::try_from()` to parse bsk
+- Signs with `signing_key.sign(&mut OsRng, sighash_bytes)`
+- Returns 64-byte signature (R || s format)
+- Includes test coverage for null pointers and different sighashes
 
 **Tasks:**
-- [ ] Implement RedPallas binding signature using `reddsa` crate
-- [ ] Convert bsk (binding signing key) from bytes
-- [ ] Sign the transaction sighash
-- [ ] Return 64-byte signature
+- [x] Implement RedPallas binding signature using `reddsa` crate
+- [x] Convert bsk (binding signing key) from bytes
+- [x] Sign the transaction sighash
+- [x] Return 64-byte signature
 
 **References:**
 - `reddsa::orchard::Binding` signing key type
 - ZIP 244 binding signature specification
 
-**Also Update:**
-- [ ] `pkg/roles/tx_extractor.go:358-376` - Wire up FFI call to replace stub:
+**Still Needed:**
+- [ ] `pkg/roles/tx_extractor.go:112-128` - Wire up FFI call:
   ```go
   func signBinding(bsk [32]byte, sighash [32]byte) [64]byte {
-      // TODO: Must use Orchard FFI for RedPallas signing
-      return [64]byte{} // Currently placeholder
+      // TODO: Call ffi.SignBinding(bsk, sighash)
   }
   ```
 
 **Acceptance Criteria:**
-- Binding signature verifies against transaction hash
-- Signature format matches Zcash v5 transaction spec
+- ✅ Binding signature verifies against transaction hash (tested)
+- ✅ Signature format matches Zcash v5 transaction spec
 
 ---
 
-### 1.3 Implement Orchard Note Encryption
+### 1.3 Implement Orchard Note Encryption ⚠️ NOT IMPLEMENTED
 
-**File:** `pkg/ffi/rust/src/lib.rs:298-316`
+**File:** `pkg/ffi/rust/src/lib.rs:324-342`
+
+**Status:** ❌ Returns error stub - requires `zcash_note_encryption` integration
 
 **Current State:**
 ```rust
-pub extern "C" fn ffi_orchard_encrypt_note(...) -> FFIResult {
-    // Not implemented - need to use orchard::note_encryption
-    FFIResult::error("note encryption not implemented".to_string())
+pub unsafe extern "C" fn ffi_orchard_encrypt_note(...) -> FFIErrorCode {
+    set_last_error("Note encryption not implemented: requires zcash_note_encryption with OrchardDomain setup".to_string());
+    FFIErrorCode::OrchardCryptoFailed
 }
 ```
 
 **Tasks:**
-- [ ] Implement note encryption using `orchard::note_encryption::OrchardNoteEncryption`
-- [ ] Construct `OrchardDomain` for encryption
+- [ ] Add `zcash_note_encryption` crate to dependencies
+- [ ] Implement encryption using `OrchardNoteEncryption` and `OrchardDomain`
+- [ ] Construct `Note` from components for encryption
 - [ ] Generate encrypted note ciphertext (580 bytes)
 - [ ] Generate encrypted outgoing ciphertext (80 bytes)
 - [ ] Handle memo field correctly
 
 **References:**
 - `orchard::note_encryption::OrchardNoteEncryption`
+- `zcash_note_encryption::NoteEncryption`
 - ZIP 212 (key agreement and note encryption)
 
 **Also Update:**
-- [ ] `pkg/roles/constructor.go:288-301` - Wire up FFI call to replace stub:
-  ```go
-  func encryptNote(...) ([]byte, []byte) {
-      // TODO: Must call Orchard FFI for encryption
-      return make([]byte, 580), make([]byte, 80) // Placeholder
-  }
-  ```
+- [ ] `pkg/roles/constructor.go:277-296` - Wire up FFI call to replace stub
 
 **Acceptance Criteria:**
 - Recipient can decrypt note with their IVK
@@ -393,9 +388,10 @@ zcash-t2o create-transaction \
 ## Task Checklist Summary
 
 ### Must Have (Blocking Production Use)
-- [ ] 1.1 - Load proving key and implement proof generation
-- [ ] 1.2 - Implement binding signature
-- [ ] 1.3 - Implement note encryption
+- [x] 1.1 - Load proving key and implement proof generation ✅
+- [x] 1.2 - Implement binding signature (Rust FFI) ✅
+- [ ] 1.2b - Wire up binding signature in Go tx_extractor
+- [ ] 1.3 - Implement note encryption ⚠️ CRITICAL BLOCKER
 - [ ] 2.3 - Wire up constructor FFI calls
 - [ ] 2.4 - Wire up IO finalizer FFI calls
 - [ ] 3.1 - End-to-end integration test with real proofs
@@ -445,23 +441,6 @@ go vet ./...                 # Go static analysis
 
 ---
 
-## Estimated Timeline
-
-**Week 1:**
-- Days 1-2: Complete Phase 1 (proving, binding sig, encryption)
-- Day 3: Complete Phase 2 (wire up FFI calls)
-- Day 4: Phase 3.1 (e2e integration tests)
-- Day 5: Phase 3.2 (test vectors)
-
-**Week 2:**
-- Days 1-2: Fix any issues from testing
-- Days 3-4: Phase 4 (polish & docs)
-- Day 5: Phase 5.1 (security review)
-
-**Total Estimated Time:** 10 days for complete production-ready implementation
-
----
-
 ## Resources
 
 ### Key Files to Modify
@@ -503,5 +482,5 @@ The project is complete when:
 
 ---
 
-**Last Updated:** 2025-11-27
+**Last Updated:** 2025-11-30
 **Maintainer:** @trbiv
