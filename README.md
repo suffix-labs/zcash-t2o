@@ -2,7 +2,7 @@
 
 **Transparent-to-Orchard PCZT Library for Go**
 
-A Go implementation of PCZT (Partially Created Zcash Transaction) based on [ZIP 374](https://zips.z.cash/zip-0374), enabling transparent-only Bitcoin-style wallets to send shielded Orchard outputs.
+A Go implementation of PCZT (Partially Created Zcash Transaction) based on [ZIP 374 WIP](https://github.com/zcash/zips/pull/1063), enabling transparent-only Bitcoin-style wallets to send shielded Orchard outputs.
 
 ## Overview
 
