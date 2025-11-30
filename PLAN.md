@@ -1,6 +1,6 @@
 # Implementation Plan: Complete Zcash T2O PCZT Library
 
-**Current Status:** ~85% Complete
+**Current Status:** ~90% Complete
 **Target:** Production-ready implementation per PROBLEM_SPEC.md
 **Last Updated:** 2025-11-30
 
@@ -248,22 +248,50 @@ func TestCompleteTransactionWorkflow(t *testing.T) {
 
 ---
 
-### 3.2 ZIP Test Vectors
+### 3.2 ZIP Test Vectors ✅ COMPLETE (ZIP 244)
+
+**Files:**
+- `pkg/crypto/zip244.go` - ZIP 244 signature hash computation
+- `pkg/crypto/zip244_test.go` - Test vector validation
+- `pkg/crypto/tx_parser.go` - V5 transaction parsing
+- `testdata/vectors/zip_0244.json` - Official test vectors
+
+**Status:** ✅ ZIP 244 fully implemented and tested
+
+**Implementation:**
+- Full ZIP 244 sighash computation (header, transparent, sapling, orchard digests)
+- V5 transaction parser supporting all bundle types (transparent, sapling, orchard)
+- All sighash variants: SIGHASH_ALL, SIGHASH_NONE, SIGHASH_SINGLE, ANYONECANPAY
+- Shielded signature hash computation
+- TXID computation from parsed transactions
+- Sapling digest computation with full spend/output support
+
+**Test Coverage:**
+- 10 test vectors from official ZIP 244 test suite
+- All TXID computations pass
+- All shielded sighash computations pass
+- All transparent sighash variants pass (ALL, NONE, SINGLE, with/without ANYONECANPAY)
 
 **Tasks:**
-- [ ] Add ZIP 244 sighash test vectors
+- [x] Add ZIP 244 sighash test vectors
+- [x] Implement V5 transaction parser
+- [x] Implement header digest computation
+- [x] Implement transparent digest computation
+- [x] Implement Sapling digest computation
+- [x] Implement Orchard digest computation
+- [x] Implement all sighash type variants
+- [x] Implement shielded signature hash
+- [x] Implement TXID computation
 - [ ] Add ZIP 374 PCZT serialization test vectors
 - [ ] Verify compatibility with Rust `pczt` crate
-
-**New Test File:** `pkg/crypto/zip244_vectors_test.go`
 
 **References:**
 - https://github.com/zcash/zips/blob/main/zip-0244.rst#test-vectors
 - https://github.com/zcash/librustzcash/tree/main/pczt/tests
 
 **Acceptance Criteria:**
-- All official test vectors pass
-- Serialization round-trips match Rust implementation
+- ✅ All official ZIP 244 test vectors pass
+- Serialization round-trips match Rust implementation (pending ZIP 374)
 
 ---
 
@@ -399,10 +427,11 @@ zcash-t2o create-transaction \
 ### Should Have (Important for Robustness)
 - [ ] 2.1 - Fix nullifier derivation
 - [ ] 2.2 - Fix ephemeral key derivation
-- [ ] 3.2 - ZIP test vectors
+- [x] 3.2 - ZIP 244 test vectors ✅ (10 vectors, all passing)
 - [ ] 4.1 - Error handling improvements
 
 ### Nice to Have (Polish)
+- [ ] 3.2b - ZIP 374 PCZT serialization test vectors
 - [ ] 3.3 - Testnet integration test
 - [ ] 4.2 - Performance optimization
 - [ ] 4.3 - Documentation updates
@@ -452,6 +481,14 @@ pkg/roles/tx_extractor.go         # Wire up binding signature
 pkg/ffi/bridge.go                 # Go FFI bindings (if needed)
 ```
 
+### Recently Completed Files
+```
+pkg/crypto/zip244.go              # ZIP 244 signature hash computation ✅
+pkg/crypto/zip244_test.go         # ZIP 244 test vector validation ✅
+pkg/crypto/tx_parser.go           # V5 transaction parsing ✅
+testdata/vectors/zip_0244.json    # Official ZIP 244 test vectors ✅
+```
+
 ### External References
 - [ZIP 374 - PCZT Spec](https://zips.z.cash/zip-0374)
 - [ZIP 244 - Signature Hash](https://zips.z.cash/zip-0244)
@@ -471,14 +508,14 @@ pkg/ffi/bridge.go                 # Go FFI bindings (if needed)
 
 The project is complete when:
 
-1. ✅ All 8 API functions work with real cryptographic operations
-2. ✅ Can create, prove, sign, and extract valid Zcash v5 transactions
-3. ✅ Transactions broadcast successfully to testnet
-4. ✅ All ZIP test vectors pass
-5. ✅ Integration tests pass without stubs
-6. ✅ Documentation is complete and accurate
-7. ✅ No placeholder/TODO comments in production code paths
-8. ✅ Security review completed (at least self-review)
+1. ⬜ All 8 API functions work with real cryptographic operations
+2. ⬜ Can create, prove, sign, and extract valid Zcash v5 transactions
+3. ⬜ Transactions broadcast successfully to testnet
+4. ✅ All ZIP 244 test vectors pass (10/10)
+5. ⬜ Integration tests pass without stubs
+6. ⬜ Documentation is complete and accurate
+7. ⬜ No placeholder/TODO comments in production code paths
+8. ⬜ Security review completed (at least self-review)
 
 ---
 
