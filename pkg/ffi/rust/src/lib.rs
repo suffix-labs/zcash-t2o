@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 
 // Orchard imports
 use orchard::{
-    keys::{SpendAuthorizingKey, SpendingKey},
+    keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey},
     note::{ExtractedNoteCommitment, RandomSeed, Rho},
     note_encryption::{OrchardDomain, OrchardNoteEncryption},
     value::{NoteValue, ValueCommitTrapdoor, ValueCommitment},
@@ -29,7 +29,7 @@ use orchard::{
 use zcash_note_encryption::Domain;
 
 // Pallas curve imports
-use group::ff::PrimeField;
+use group::ff::{Field, PrimeField};
 use pasta_curves::pallas;
 
 // RedPallas signatures
@@ -539,8 +539,6 @@ pub unsafe extern "C" fn ffi_orchard_randomized_key(
         }
     };
 
-    let spend_auth_key = SpendAuthorizingKey::from(&spending_key);
-
     // Parse alpha (randomizer)
     let alpha_bytes = slice::from_raw_parts(alpha, 32);
     let mut alpha_arr = [0u8; 32];
@@ -554,12 +552,19 @@ pub unsafe extern "C" fn ffi_orchard_randomized_key(
         }
     };
 
-    // Randomize the key
-    let rk = spend_auth_key.randomize(&alpha_scalar);
+    // Get the full viewing key and then the spend validating key (ak)
+    let fvk = FullViewingKey::from(&spending_key);
 
-    // The randomize method returns orchard's internal SigningKey type
-    // We need to serialize it directly using the bytes method
-    // Since it's an internal type, we'll use the Into<[u8; 32]> trait
+    // Get the spend validating key (ak) - this is the public key counterpart
+    use orchard::keys::SpendValidatingKey;
+    let spend_validating_key: SpendValidatingKey = fvk.into();
+
+    // Randomize the spend validating key (verification key) with alpha
+    // This produces rk = ak + alpha * G (on Pallas curve)
+    let rk = spend_validating_key.randomize(&alpha_scalar);
+
+    // Get the randomized verification key bytes
+    // The randomize method returns orchard's internal redpallas::VerificationKey
     let rk_bytes: [u8; 32] = rk.into();
 
     // Copy to output
@@ -705,6 +710,394 @@ pub unsafe extern "C" fn ffi_reddsa_sign_binding(
     FFIErrorCode::Ok
 }
 
+/// Generate a valid Pallas base field element for rho or other uses
+///
+/// In Orchard, rho must be a valid Pallas base field element. For T2O transactions,
+/// we create "dummy spends" that need valid rho values. This function generates
+/// a valid field element by creating a random Pallas base.
+///
+/// # Safety
+/// - All pointer parameters must point to valid arrays of the specified size
+#[no_mangle]
+pub unsafe extern "C" fn ffi_orchard_generate_dummy_rho(
+    rho_out: *mut u8,          // [32] - output rho
+) -> FFIErrorCode {
+    if rho_out.is_null() {
+        return FFIErrorCode::NullPointer;
+    }
+
+    // Generate a random Pallas base field element
+    // This is guaranteed to be a valid rho
+    let base_element = pallas::Base::random(&mut OsRng);
+
+    // Serialize to bytes (canonical representation)
+    let rho_bytes = base_element.to_repr();
+
+    // Copy to output
+    ptr::copy_nonoverlapping(rho_bytes.as_ptr(), rho_out, 32);
+
+    FFIErrorCode::Ok
+}
+
+/// Generate a valid Pallas scalar for value commitment randomness (rcv)
+///
+/// The value commitment trapdoor (rcv) must be a valid Pallas scalar.
+/// This function generates a cryptographically random valid scalar.
+///
+/// # Safety
+/// - All pointer parameters must point to valid arrays of the specified size
+#[no_mangle]
+pub unsafe extern "C" fn ffi_orchard_generate_rcv(
+    rcv_out: *mut u8,          // [32] - output rcv
+) -> FFIErrorCode {
+    if rcv_out.is_null() {
+        return FFIErrorCode::NullPointer;
+    }
+
+    // Generate a random Pallas scalar
+    // This is guaranteed to be a valid value commitment trapdoor
+    let scalar = pallas::Scalar::random(&mut OsRng);
+
+    // Serialize to bytes (canonical representation)
+    let rcv_bytes = scalar.to_repr();
+
+    // Copy to output
+    ptr::copy_nonoverlapping(rcv_bytes.as_ptr(), rcv_out, 32);
+
+    FFIErrorCode::Ok
+}
+
+/// Generate a valid dummy nullifier (Pallas base field element)
+///
+/// Nullifiers in Orchard must be valid Pallas base field elements.
+/// For dummy spends in T2O transactions, we need nullifiers that are valid
+/// but don't correspond to any real note. This function generates random
+/// valid field elements for that purpose.
+///
+/// # Safety
+/// - All pointer parameters must point to valid arrays of the specified size
+#[no_mangle]
+pub unsafe extern "C" fn ffi_orchard_generate_dummy_nullifier(
+    nullifier_out: *mut u8,    // [32] - output nullifier
+) -> FFIErrorCode {
+    if nullifier_out.is_null() {
+        return FFIErrorCode::NullPointer;
+    }
+
+    // Generate a random Pallas base field element
+    // This is guaranteed to be a valid nullifier representation
+    let base_element = pallas::Base::random(&mut OsRng);
+
+    // Serialize to bytes (canonical representation)
+    let nf_bytes = base_element.to_repr();
+
+    // Copy to output
+    ptr::copy_nonoverlapping(nf_bytes.as_ptr(), nullifier_out, 32);
+
+    FFIErrorCode::Ok
+}
+
+/// Generate a valid random dummy spending key for dummy spends
+///
+/// In T2O transactions, we need dummy spends with valid spending keys.
+/// This generates a random valid SpendingKey by trying random seeds until
+/// one produces a valid key (SpendingKey::from_bytes has constraints).
+///
+/// # Safety
+/// - All pointer parameters must point to valid arrays of the specified size
+#[no_mangle]
+pub unsafe extern "C" fn ffi_orchard_generate_dummy_sk(
+    sk_out: *mut u8,           // [32] - output spending key bytes
+) -> FFIErrorCode {
+    if sk_out.is_null() {
+        return FFIErrorCode::NullPointer;
+    }
+
+    // SpendingKey::from_bytes can fail for some byte values, so we try until we get a valid one
+    use rand::RngCore;
+    loop {
+        // Generate random 32 bytes using OsRng
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+
+        // Try to create a valid SpendingKey
+        if SpendingKey::from_bytes(seed).is_some().into() {
+            // This seed produces a valid SpendingKey, use it
+            ptr::copy_nonoverlapping(seed.as_ptr(), sk_out, 32);
+            return FFIErrorCode::Ok;
+        }
+        // If not valid, try again (this is rare, most seeds are valid)
+    }
+}
+
+/// Generate a complete dummy spend with all cryptographically consistent fields
+///
+/// This function generates all the fields needed for a dummy spend that will pass
+/// proof verification. All values are consistent with each other:
+/// - The nullifier is derived from the note (fvk, recipient, value=0, rho, rseed)
+/// - The rk is derived from the fvk and alpha
+/// - The witness is a valid dummy witness
+///
+/// Returns in order:
+/// - nullifier [32]
+/// - rk [32]
+/// - alpha [32]
+/// - fvk [96]
+/// - recipient [43]
+/// - rho [32]
+/// - rseed [32]
+/// - witness_position [4] (as u32 little-endian)
+/// - witness_path [1024] (32 x 32 bytes)
+/// - dummy_sk [32]
+///
+/// Total: 32+32+32+96+43+32+32+4+1024+32 = 1359 bytes
+///
+/// # Safety
+/// - All pointer parameters must point to valid arrays of the specified size
+#[no_mangle]
+pub unsafe extern "C" fn ffi_orchard_create_dummy_spend(
+    output_out: *mut u8,       // [1359] - all output fields
+) -> FFIErrorCode {
+    if output_out.is_null() {
+        return FFIErrorCode::NullPointer;
+    }
+
+    use rand::RngCore;
+
+    // Generate random spending key for the dummy spend
+    loop {
+        let mut sk_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut sk_bytes);
+
+        let spending_key: SpendingKey = match SpendingKey::from_bytes(sk_bytes).into() {
+            Some(k) => k,
+            None => continue, // Try again with different random bytes
+        };
+
+        // Derive FVK and address
+        let fvk = FullViewingKey::from(&spending_key);
+        let recipient = fvk.address_at(0u32, Scope::External);
+
+        // Generate rho and rseed (for the dummy note)
+        let rho_base = pallas::Base::random(&mut OsRng);
+        let rho = Rho::from_bytes(&rho_base.to_repr())
+            .into_option()
+            .expect("random base should be valid rho");
+
+        // Generate random rseed using public API
+        let mut rseed_bytes = [0u8; 32];
+        loop {
+            OsRng.fill_bytes(&mut rseed_bytes);
+            if RandomSeed::from_bytes(rseed_bytes, &rho).is_some().into() {
+                break;
+            }
+        }
+        let rseed = RandomSeed::from_bytes(rseed_bytes, &rho)
+            .into_option()
+            .expect("rseed should be valid - we just checked");
+
+        // Create the dummy note (value = 0) using public API
+        let note = match Note::from_parts(recipient, NoteValue::from_raw(0), rho, rseed).into_option() {
+            Some(n) => n,
+            None => continue, // Rare, but try again
+        };
+
+        // Derive nullifier from the note
+        let nullifier = note.nullifier(&fvk);
+
+        // Generate alpha (spend auth randomizer)
+        let alpha = pallas::Scalar::random(&mut OsRng);
+
+        // Derive rk (randomized verification key)
+        use orchard::keys::SpendValidatingKey;
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let rk = ak.randomize(&alpha);
+
+        // Generate dummy witness
+        let witness_position = OsRng.next_u32();
+        let mut witness_path = [[0u8; 32]; 32];
+        for i in 0..32 {
+            let hash = pallas::Base::random(&mut OsRng);
+            witness_path[i] = hash.to_repr();
+        }
+
+        // Write all outputs
+        let mut offset = 0usize;
+
+        // nullifier [32]
+        let nf_bytes: [u8; 32] = nullifier.to_bytes();
+        ptr::copy_nonoverlapping(nf_bytes.as_ptr(), output_out.add(offset), 32);
+        offset += 32;
+
+        // rk [32]
+        let rk_bytes: [u8; 32] = rk.into();
+        ptr::copy_nonoverlapping(rk_bytes.as_ptr(), output_out.add(offset), 32);
+        offset += 32;
+
+        // alpha [32]
+        let alpha_bytes = alpha.to_repr();
+        ptr::copy_nonoverlapping(alpha_bytes.as_ptr(), output_out.add(offset), 32);
+        offset += 32;
+
+        // fvk [96]
+        let fvk_bytes = fvk.to_bytes();
+        ptr::copy_nonoverlapping(fvk_bytes.as_ptr(), output_out.add(offset), 96);
+        offset += 96;
+
+        // recipient [43]
+        let recipient_bytes = recipient.to_raw_address_bytes();
+        ptr::copy_nonoverlapping(recipient_bytes.as_ptr(), output_out.add(offset), 43);
+        offset += 43;
+
+        // rho [32]
+        let rho_bytes = rho.to_bytes();
+        ptr::copy_nonoverlapping(rho_bytes.as_ptr(), output_out.add(offset), 32);
+        offset += 32;
+
+        // rseed [32]
+        ptr::copy_nonoverlapping(rseed_bytes.as_ptr(), output_out.add(offset), 32);
+        offset += 32;
+
+        // witness_position [4]
+        let pos_bytes = witness_position.to_le_bytes();
+        ptr::copy_nonoverlapping(pos_bytes.as_ptr(), output_out.add(offset), 4);
+        offset += 4;
+
+        // witness_path [1024]
+        for i in 0..32 {
+            ptr::copy_nonoverlapping(witness_path[i].as_ptr(), output_out.add(offset + i * 32), 32);
+        }
+        offset += 1024;
+
+        // dummy_sk [32]
+        ptr::copy_nonoverlapping(sk_bytes.as_ptr(), output_out.add(offset), 32);
+
+        return FFIErrorCode::Ok;
+    }
+}
+
+/// Generate a dummy Merkle witness for dummy spends
+///
+/// A dummy witness consists of:
+/// - A random position (u32)
+/// - 32 random Pallas base field elements (one for each level of the tree)
+///
+/// The position is returned in the first 4 bytes (little-endian).
+/// The remaining 32*32 = 1024 bytes are the authentication path.
+///
+/// # Safety
+/// - All pointer parameters must point to valid arrays of the specified size
+#[no_mangle]
+pub unsafe extern "C" fn ffi_orchard_generate_dummy_witness(
+    position_out: *mut u32,    // output position
+    path_out: *mut u8,         // [32 * 32 = 1024] - output path
+) -> FFIErrorCode {
+    if position_out.is_null() || path_out.is_null() {
+        return FFIErrorCode::NullPointer;
+    }
+
+    use rand::RngCore;
+
+    // Generate random position
+    *position_out = OsRng.next_u32();
+
+    // Generate 32 random Pallas base elements (one per tree level)
+    for i in 0..32 {
+        let base = pallas::Base::random(&mut OsRng);
+        let base_bytes = base.to_repr();
+        ptr::copy_nonoverlapping(base_bytes.as_ptr(), path_out.add(i * 32), 32);
+    }
+
+    FFIErrorCode::Ok
+}
+
+/// Derive Full Viewing Key from a spending key
+///
+/// The FVK is 96 bytes and is required by the prover to generate proofs.
+///
+/// # Safety
+/// - All pointer parameters must point to valid arrays of the specified size
+#[no_mangle]
+pub unsafe extern "C" fn ffi_orchard_derive_fvk(
+    sk: *const u8,             // [32] - spending key bytes
+    fvk_out: *mut u8,          // [96] - output FVK bytes
+) -> FFIErrorCode {
+    if sk.is_null() || fvk_out.is_null() {
+        return FFIErrorCode::NullPointer;
+    }
+
+    // Parse spending key
+    let sk_bytes = slice::from_raw_parts(sk, 32);
+    let mut sk_arr = [0u8; 32];
+    sk_arr.copy_from_slice(sk_bytes);
+
+    let spending_key: SpendingKey = match SpendingKey::from_bytes(sk_arr).into() {
+        Some(k) => k,
+        None => {
+            set_last_error("Invalid spending key".to_string());
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
+
+    // Derive full viewing key
+    let fvk = FullViewingKey::from(&spending_key);
+
+    // Serialize to bytes
+    let fvk_bytes = fvk.to_bytes();
+
+    // Copy to output
+    ptr::copy_nonoverlapping(fvk_bytes.as_ptr(), fvk_out, 96);
+
+    FFIErrorCode::Ok
+}
+
+/// Generate a test Orchard address from a 32-byte seed
+///
+/// This creates a valid Orchard address for testing purposes by:
+/// 1. Creating a SpendingKey from the seed
+/// 2. Deriving the FullViewingKey
+/// 3. Getting the default address
+///
+/// # Safety
+/// - All pointer parameters must point to valid arrays of the specified size
+#[no_mangle]
+pub unsafe extern "C" fn ffi_orchard_test_address(
+    seed: *const u8,           // [32] - seed bytes
+    address_out: *mut u8,      // [43] - output address
+) -> FFIErrorCode {
+    if seed.is_null() || address_out.is_null() {
+        return FFIErrorCode::NullPointer;
+    }
+
+    // Parse seed
+    let seed_bytes = slice::from_raw_parts(seed, 32);
+    let mut seed_arr = [0u8; 32];
+    seed_arr.copy_from_slice(seed_bytes);
+
+    // Create spending key from seed
+    let spending_key: SpendingKey = match SpendingKey::from_bytes(seed_arr).into() {
+        Some(k) => k,
+        None => {
+            set_last_error("Invalid seed for spending key".to_string());
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
+
+    // Derive full viewing key
+    let fvk = FullViewingKey::from(&spending_key);
+
+    // Get default address (external scope, index 0)
+    let address = fvk.address_at(0u32, Scope::External);
+
+    // Serialize to raw bytes
+    let address_bytes = address.to_raw_address_bytes();
+
+    // Copy to output
+    ptr::copy_nonoverlapping(address_bytes.as_ptr(), address_out, 43);
+
+    FFIErrorCode::Ok
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -785,6 +1178,17 @@ mod tests {
         let pczt_bytes = pczt.serialize();
 
         println!("Created PCZT: {} bytes", pczt_bytes.len());
+
+        // Print bytes in a more readable format
+        print!("PCZT bytes: ");
+        for (i, b) in pczt_bytes.iter().enumerate() {
+            print!("{:02x} ", b);
+            if (i + 1) % 16 == 0 {
+                println!();
+                print!("            ");
+            }
+        }
+        println!();
 
         // Test FFI function
         unsafe {

@@ -111,6 +111,41 @@ FFIErrorCode ffi_reddsa_sign_binding(
     const uint8_t sighash[32],
     uint8_t sig_out[64]
 );
+
+FFIErrorCode ffi_orchard_test_address(
+    const uint8_t seed[32],
+    uint8_t address_out[43]
+);
+
+FFIErrorCode ffi_orchard_generate_dummy_rho(
+    uint8_t rho_out[32]
+);
+
+FFIErrorCode ffi_orchard_generate_rcv(
+    uint8_t rcv_out[32]
+);
+
+FFIErrorCode ffi_orchard_generate_dummy_nullifier(
+    uint8_t nullifier_out[32]
+);
+
+FFIErrorCode ffi_orchard_generate_dummy_sk(
+    uint8_t sk_out[32]
+);
+
+FFIErrorCode ffi_orchard_derive_fvk(
+    const uint8_t sk[32],
+    uint8_t fvk_out[96]
+);
+
+FFIErrorCode ffi_orchard_generate_dummy_witness(
+    uint32_t *position_out,
+    uint8_t path_out[1024]
+);
+
+FFIErrorCode ffi_orchard_create_dummy_spend(
+    uint8_t output_out[1359]
+);
 */
 import "C"
 import (
@@ -454,4 +489,245 @@ func RedDSASignBinding(bsk [32]byte, sighash [32]byte) ([64]byte, error) {
 	}
 
 	return sig, nil
+}
+
+// OrchardTestAddress generates a valid Orchard address from a 32-byte seed.
+//
+// This is useful for testing - it creates a real Orchard address that can be
+// used for encryption and decryption tests.
+//
+// Parameters:
+//   - seed: 32-byte seed (will be used to derive SpendingKey)
+//
+// Returns:
+//   - 43-byte Orchard address
+//   - Error if derivation fails
+func OrchardTestAddress(seed [32]byte) ([43]byte, error) {
+	var address [43]byte
+
+	code := C.ffi_orchard_test_address(
+		(*C.uint8_t)(unsafe.Pointer(&seed[0])),
+		(*C.uint8_t)(unsafe.Pointer(&address[0])),
+	)
+
+	if code != C.FFI_OK {
+		return address, getLastError(code)
+	}
+
+	return address, nil
+}
+
+// OrchardGenerateDummyRho generates a valid rho (nullifier base) for dummy spends.
+//
+// In Orchard, rho must be a valid Pallas base field element. This function
+// generates a cryptographically random valid rho for use in dummy spends
+// (transparent-to-Orchard transactions).
+//
+// Returns:
+//   - 32-byte valid rho
+//   - Error if generation fails
+func OrchardGenerateDummyRho() ([32]byte, error) {
+	var rho [32]byte
+
+	code := C.ffi_orchard_generate_dummy_rho(
+		(*C.uint8_t)(unsafe.Pointer(&rho[0])),
+	)
+
+	if code != C.FFI_OK {
+		return rho, getLastError(code)
+	}
+
+	return rho, nil
+}
+
+// OrchardGenerateRcv generates a valid value commitment randomness (rcv).
+//
+// The rcv must be a valid Pallas scalar. This function generates a
+// cryptographically random valid scalar for use in value commitments.
+//
+// Returns:
+//   - 32-byte valid rcv
+//   - Error if generation fails
+func OrchardGenerateRcv() ([32]byte, error) {
+	var rcv [32]byte
+
+	code := C.ffi_orchard_generate_rcv(
+		(*C.uint8_t)(unsafe.Pointer(&rcv[0])),
+	)
+
+	if code != C.FFI_OK {
+		return rcv, getLastError(code)
+	}
+
+	return rcv, nil
+}
+
+// OrchardGenerateDummyNullifier generates a valid dummy nullifier.
+//
+// Nullifiers in Orchard must be valid Pallas base field elements.
+// For dummy spends in T2O transactions, we need nullifiers that are valid
+// but don't correspond to any real note.
+//
+// Returns:
+//   - 32-byte valid nullifier
+//   - Error if generation fails
+func OrchardGenerateDummyNullifier() ([32]byte, error) {
+	var nf [32]byte
+
+	code := C.ffi_orchard_generate_dummy_nullifier(
+		(*C.uint8_t)(unsafe.Pointer(&nf[0])),
+	)
+
+	if code != C.FFI_OK {
+		return nf, getLastError(code)
+	}
+
+	return nf, nil
+}
+
+// OrchardGenerateDummySk generates a valid random spending key for dummy spends.
+//
+// In T2O transactions, we need dummy spends with valid spending keys.
+// This generates a random valid SpendingKey by trying random seeds until
+// one produces a valid key.
+//
+// Returns:
+//   - 32-byte valid spending key
+//   - Error if generation fails
+func OrchardGenerateDummySk() ([32]byte, error) {
+	var sk [32]byte
+
+	code := C.ffi_orchard_generate_dummy_sk(
+		(*C.uint8_t)(unsafe.Pointer(&sk[0])),
+	)
+
+	if code != C.FFI_OK {
+		return sk, getLastError(code)
+	}
+
+	return sk, nil
+}
+
+// OrchardDeriveFvk derives the Full Viewing Key from a spending key.
+//
+// The FVK is 96 bytes and is required by the prover to generate proofs.
+//
+// Returns:
+//   - 96-byte Full Viewing Key
+//   - Error if derivation fails
+func OrchardDeriveFvk(sk [32]byte) ([96]byte, error) {
+	var fvk [96]byte
+
+	code := C.ffi_orchard_derive_fvk(
+		(*C.uint8_t)(unsafe.Pointer(&sk[0])),
+		(*C.uint8_t)(unsafe.Pointer(&fvk[0])),
+	)
+
+	if code != C.FFI_OK {
+		return fvk, getLastError(code)
+	}
+
+	return fvk, nil
+}
+
+// OrchardGenerateDummyWitness generates a dummy Merkle witness for dummy spends.
+//
+// Returns:
+//   - position: Leaf position in the tree
+//   - path: 32 x 32-byte hashes (one per tree level)
+//   - Error if generation fails
+func OrchardGenerateDummyWitness() (uint32, [32][32]byte, error) {
+	var position C.uint32_t
+	var pathBytes [1024]byte
+
+	code := C.ffi_orchard_generate_dummy_witness(
+		&position,
+		(*C.uint8_t)(unsafe.Pointer(&pathBytes[0])),
+	)
+
+	if code != C.FFI_OK {
+		return 0, [32][32]byte{}, getLastError(code)
+	}
+
+	// Convert flat bytes to structured path
+	var path [32][32]byte
+	for i := 0; i < 32; i++ {
+		copy(path[i][:], pathBytes[i*32:(i+1)*32])
+	}
+
+	return uint32(position), path, nil
+}
+
+// DummySpendData contains all the fields for a cryptographically consistent dummy spend.
+type DummySpendData struct {
+	Nullifier       [32]byte
+	Rk              [32]byte
+	Alpha           [32]byte
+	Fvk             [96]byte
+	Recipient       [43]byte
+	Rho             [32]byte
+	Rseed           [32]byte
+	WitnessPosition uint32
+	WitnessPath     [32][32]byte
+	DummySk         [32]byte
+}
+
+// OrchardCreateDummySpend generates a complete dummy spend with all consistent fields.
+//
+// This ensures all cryptographic values are properly interrelated:
+// - Nullifier is derived from the note (not random)
+// - rk matches the fvk and alpha
+// - All fields are valid for proof verification
+func OrchardCreateDummySpend() (*DummySpendData, error) {
+	var output [1359]byte
+
+	code := C.ffi_orchard_create_dummy_spend(
+		(*C.uint8_t)(unsafe.Pointer(&output[0])),
+	)
+
+	if code != C.FFI_OK {
+		return nil, getLastError(code)
+	}
+
+	// Parse output fields
+	data := &DummySpendData{}
+	offset := 0
+
+	copy(data.Nullifier[:], output[offset:offset+32])
+	offset += 32
+
+	copy(data.Rk[:], output[offset:offset+32])
+	offset += 32
+
+	copy(data.Alpha[:], output[offset:offset+32])
+	offset += 32
+
+	copy(data.Fvk[:], output[offset:offset+96])
+	offset += 96
+
+	copy(data.Recipient[:], output[offset:offset+43])
+	offset += 43
+
+	copy(data.Rho[:], output[offset:offset+32])
+	offset += 32
+
+	copy(data.Rseed[:], output[offset:offset+32])
+	offset += 32
+
+	// Position is 4 bytes little-endian
+	data.WitnessPosition = uint32(output[offset]) |
+		uint32(output[offset+1])<<8 |
+		uint32(output[offset+2])<<16 |
+		uint32(output[offset+3])<<24
+	offset += 4
+
+	// Witness path is 32 x 32 bytes
+	for i := 0; i < 32; i++ {
+		copy(data.WitnessPath[i][:], output[offset+i*32:offset+(i+1)*32])
+	}
+	offset += 1024
+
+	copy(data.DummySk[:], output[offset:offset+32])
+
+	return data, nil
 }

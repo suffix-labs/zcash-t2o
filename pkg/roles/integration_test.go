@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/suffix-labs/zcash-t2o/pkg/crypto"
+	"github.com/suffix-labs/zcash-t2o/pkg/ffi"
 	"github.com/suffix-labs/zcash-t2o/pkg/pczt"
 )
 
@@ -20,13 +21,16 @@ func TestTransparentToOrchard(t *testing.T) {
 	)
 
 	// Step 1: Create transparent input keys
-	// For testing, we'll use a known WIF key
-	// In production, this would come from the wallet
-	privateKeyWIF := "KxYPKw8xvJFDQz1qsVWqehDTx8VqnJvLqJr9iQxKhRgQqUx7YwMN" // Example testnet key
-	privateKey, err := crypto.ParsePrivateKeyWIF(privateKeyWIF)
+	// For testing, we generate a key from a known seed
+	privateKeyBytes := [32]byte{
+		0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+		0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+		0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+		0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01,
+	}
+	privateKey, err := crypto.PrivateKeyFromBytes(privateKeyBytes[:])
 	if err != nil {
-		t.Skipf("Skipping test - need valid WIF key: %v", err)
-		return
+		t.Fatalf("Failed to create private key: %v", err)
 	}
 
 	pubkey := privateKey.PublicKey()
@@ -37,15 +41,18 @@ func TestTransparentToOrchard(t *testing.T) {
 	scriptPubKey := createP2PKHScript(pubkeyCompressed)
 
 	// Step 2: Create Orchard recipient address
-	// For testing, we use a placeholder 43-byte address
-	// In production, this would be parsed from a unified address
-	orchardRecipient := [43]byte{
-		// Diversifier (11 bytes)
-		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
-		// pk_d (32 bytes)
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	// Generate a valid Orchard address from a test seed using FFI
+	testSeed := [32]byte{
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+		0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
 	}
+	orchardRecipient, err := ffi.OrchardTestAddress(testSeed)
+	if err != nil {
+		t.Fatalf("Failed to generate test Orchard address: %v", err)
+	}
+	t.Logf("Generated Orchard address from test seed")
 
 	// Step 3: Create PCZT with Creator role
 	creator := NewCreator(
@@ -112,24 +119,33 @@ func TestTransparentToOrchard(t *testing.T) {
 	// Test round-trip serialization after IoFinalizer
 	checkRoundTrip(t, p)
 
-	// Step 6: Create proofs with Prover role
-	// NOTE: This step requires the Rust FFI proving implementation
-	// For now, we'll skip it and manually set placeholder proof data
-	//
-	// In production:
-	// pcztBytes, _ := pczt.Serialize(p)
-	// provedBytes, err := ffi.ProvePCZT(pcztBytes)
-	// p, _ = pczt.Deserialize(provedBytes)
-	//
-	// For testing, we set placeholder proof
+	// Step 6: Create proofs with Prover role (real ZK proofs via Rust FFI)
 	if len(p.Orchard.Actions) > 0 {
-		// Set placeholder ZK proof (not cryptographically valid)
-		placeholderProof := make([]byte, 1000) // Approximate size
-		p.Orchard.ZkProof = placeholderProof
-		t.Log("⚠️  Using placeholder ZK proof - proving not implemented yet")
+		t.Log("Generating ZK proofs via FFI (this may take a moment on first run)...")
+
+		// Serialize PCZT
+		pcztBytes, err := pczt.Serialize(p)
+		if err != nil {
+			t.Fatalf("Failed to serialize PCZT for proving: %v", err)
+		}
+
+		// Generate real ZK proofs via Rust FFI
+		provedBytes, err := ffi.ProvePCZT(pcztBytes)
+		if err != nil {
+			t.Fatalf("ZK proof generation failed: %v", err)
+		}
+
+		// Parse the proved PCZT
+		p, err = pczt.Parse(provedBytes)
+		if err != nil {
+			t.Fatalf("Failed to parse proved PCZT: %v", err)
+		}
+
+		t.Logf("✓ ZK proofs generated successfully (proof size: %d bytes)", len(p.Orchard.ZkProof))
 	}
 
-	// checkRoundTrip(t, p) // Would test after proving
+	// Test round-trip serialization after proving
+	checkRoundTrip(t, p)
 
 	// Step 7: Sign transparent inputs with Signer role
 	signer := NewSigner(p)

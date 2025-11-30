@@ -107,21 +107,21 @@ func postcardEncode(pczt *PCZT) ([]byte, error) {
 
 // encodeGlobal encodes the Global struct
 func encodeGlobal(w io.Writer, g *Global) error {
-	// Write u32 fields (little-endian)
-	binary.Write(w, binary.LittleEndian, g.TxVersion)
-	binary.Write(w, binary.LittleEndian, g.VersionGroupID)
-	binary.Write(w, binary.LittleEndian, g.ConsensusBranchID)
+	// Postcard uses varint encoding for integers
+	encodeVarInt(w, uint64(g.TxVersion))
+	encodeVarInt(w, uint64(g.VersionGroupID))
+	encodeVarInt(w, uint64(g.ConsensusBranchID))
 
 	// Write Option<u32> (0x00 = None, 0x01 = Some)
 	if g.FallbackLockTime == nil {
 		w.Write([]byte{0x00})
 	} else {
 		w.Write([]byte{0x01})
-		binary.Write(w, binary.LittleEndian, *g.FallbackLockTime)
+		encodeVarInt(w, uint64(*g.FallbackLockTime))
 	}
 
-	binary.Write(w, binary.LittleEndian, g.ExpiryHeight)
-	binary.Write(w, binary.LittleEndian, g.CoinType)
+	encodeVarInt(w, uint64(g.ExpiryHeight))
+	encodeVarInt(w, uint64(g.CoinType))
 	w.Write([]byte{g.TxModifiable})
 
 	// Write Map (varint length, then key-value pairs)
@@ -158,17 +158,17 @@ func encodeTransparentBundle(w io.Writer, tb *TransparentBundle) error {
 // encodeTransparentInput encodes a single TransparentInput
 func encodeTransparentInput(w io.Writer, ti *TransparentInput) error {
 	w.Write(ti.PrevoutTxID[:])
-	binary.Write(w, binary.LittleEndian, ti.PrevoutIndex)
+	encodeVarInt(w, uint64(ti.PrevoutIndex))
 
 	// Option<u32> for Sequence
-	encodeOption32(w, ti.Sequence)
-	encodeOption32(w, ti.RequiredTimeLockTime)
-	encodeOption32(w, ti.RequiredHeightLockTime)
+	encodeOptionVarInt(w, ti.Sequence)
+	encodeOptionVarInt(w, ti.RequiredTimeLockTime)
+	encodeOptionVarInt(w, ti.RequiredHeightLockTime)
 
 	// Option<Vec<u8>> for ScriptSig
 	encodeOptionBytes(w, ti.ScriptSig)
 
-	binary.Write(w, binary.LittleEndian, ti.Value)
+	encodeVarInt(w, ti.Value)
 	encodeBytes(w, ti.ScriptPubKey)
 
 	encodeOptionBytes(w, ti.RedeemScript)
@@ -207,7 +207,7 @@ func encodeTransparentInput(w io.Writer, ti *TransparentInput) error {
 
 // encodeTransparentOutput encodes a single TransparentOutput
 func encodeTransparentOutput(w io.Writer, to *TransparentOutput) error {
-	binary.Write(w, binary.LittleEndian, to.Value)
+	encodeVarInt(w, to.Value)
 	encodeBytes(w, to.ScriptPubKey)
 	encodeOptionBytes(w, to.RedeemScript)
 
@@ -237,7 +237,16 @@ func encodeSaplingBundle(w io.Writer, sb *SaplingBundle) error {
 	encodeVarInt(w, 0) // Spends
 	encodeVarInt(w, 0) // Outputs
 
-	binary.Write(w, binary.LittleEndian, sb.ValueSum)
+	// Sapling ValueBalance is a SignedAmount (i64 as varint with zigzag encoding)
+	// Uses zigzag encoding: positive n -> 2n, negative n -> 2|n| - 1
+	var zigzag uint64
+	if sb.ValueSum >= 0 {
+		zigzag = uint64(sb.ValueSum) * 2
+	} else {
+		zigzag = uint64(-sb.ValueSum)*2 - 1
+	}
+	encodeVarInt(w, zigzag)
+
 	w.Write(sb.Anchor[:])
 
 	// Option<[u8; 32]> for Bsk (always None)
@@ -258,8 +267,8 @@ func encodeOrchardBundle(w io.Writer, ob *OrchardBundle) error {
 
 	w.Write([]byte{ob.Flags})
 
-	// ValueBalance (u64, bool)
-	binary.Write(w, binary.LittleEndian, ob.ValueSum.Magnitude)
+	// ValueBalance (varint magnitude, bool sign)
+	encodeVarInt(w, ob.ValueSum.Magnitude)
 	if ob.ValueSum.IsNegative {
 		w.Write([]byte{0x01})
 	} else {
@@ -279,13 +288,9 @@ func encodeOrchardBundle(w io.Writer, ob *OrchardBundle) error {
 		w.Write(ob.Bsk[:])
 	}
 
-	// Option<[u8; 64]> for BindingSig
-	if ob.BindingSig == nil {
-		w.Write([]byte{0x00})
-	} else {
-		w.Write([]byte{0x01})
-		w.Write(ob.BindingSig[:])
-	}
+	// Note: BindingSig is NOT part of the PCZT format - it's computed during
+	// transaction extraction and goes directly into the final transaction.
+	// The Rust pczt::orchard::Bundle struct does not have this field.
 
 	return nil
 }
@@ -412,12 +417,21 @@ func encodeOption32(w io.Writer, opt *uint32) {
 	}
 }
 
+func encodeOptionVarInt(w io.Writer, opt *uint32) {
+	if opt == nil {
+		w.Write([]byte{0x00})
+	} else {
+		w.Write([]byte{0x01})
+		encodeVarInt(w, uint64(*opt))
+	}
+}
+
 func encodeOptionU64(w io.Writer, opt *uint64) {
 	if opt == nil {
 		w.Write([]byte{0x00})
 	} else {
 		w.Write([]byte{0x01})
-		binary.Write(w, binary.LittleEndian, *opt)
+		encodeVarInt(w, *opt)
 	}
 }
 
@@ -471,7 +485,7 @@ func encodeOptionWitness(w io.Writer, mw *MerkleWitness) {
 		w.Write([]byte{0x00})
 	} else {
 		w.Write([]byte{0x01})
-		binary.Write(w, binary.LittleEndian, mw.Position)
+		encodeVarInt(w, uint64(mw.Position))
 		for i := 0; i < 32; i++ {
 			w.Write(mw.Path[i][:])
 		}
@@ -491,7 +505,7 @@ func encodeZip32Derivation(w io.Writer, zd *Zip32Derivation) {
 	w.Write(zd.SeedFingerprint[:])
 	encodeVarInt(w, uint64(len(zd.DerivationPath)))
 	for _, idx := range zd.DerivationPath {
-		binary.Write(w, binary.LittleEndian, idx)
+		encodeVarInt(w, uint64(idx))
 	}
 }
 
@@ -518,19 +532,19 @@ func postcardDecode(data []byte) (*PCZT, error) {
 	pczt := &PCZT{}
 
 	if err := decodeGlobal(r, &pczt.Global); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decodeGlobal: %w", err)
 	}
 
 	if err := decodeTransparentBundle(r, &pczt.Transparent); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decodeTransparentBundle: %w", err)
 	}
 
 	if err := decodeSaplingBundle(r, &pczt.Sapling); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decodeSaplingBundle: %w", err)
 	}
 
 	if err := decodeOrchardBundle(r, &pczt.Orchard); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decodeOrchardBundle: %w", err)
 	}
 
 	return pczt, nil
@@ -579,15 +593,24 @@ func decodeString(r io.Reader) (string, error) {
 }
 
 func decodeGlobal(r io.Reader, g *Global) error {
-	if err := binary.Read(r, binary.LittleEndian, &g.TxVersion); err != nil {
+	// Postcard uses varint encoding for integers
+	txVersion, err := decodeVarInt(r)
+	if err != nil {
 		return err
 	}
-	if err := binary.Read(r, binary.LittleEndian, &g.VersionGroupID); err != nil {
+	g.TxVersion = uint32(txVersion)
+
+	versionGroupID, err := decodeVarInt(r)
+	if err != nil {
 		return err
 	}
-	if err := binary.Read(r, binary.LittleEndian, &g.ConsensusBranchID); err != nil {
+	g.VersionGroupID = uint32(versionGroupID)
+
+	consensusBranchID, err := decodeVarInt(r)
+	if err != nil {
 		return err
 	}
+	g.ConsensusBranchID = uint32(consensusBranchID)
 
 	// Option<u32> for FallbackLockTime
 	var hasValue [1]byte
@@ -595,19 +618,25 @@ func decodeGlobal(r io.Reader, g *Global) error {
 		return err
 	}
 	if hasValue[0] == 0x01 {
-		var val uint32
-		if err := binary.Read(r, binary.LittleEndian, &val); err != nil {
+		val, err := decodeVarInt(r)
+		if err != nil {
 			return err
 		}
-		g.FallbackLockTime = &val
+		v := uint32(val)
+		g.FallbackLockTime = &v
 	}
 
-	if err := binary.Read(r, binary.LittleEndian, &g.ExpiryHeight); err != nil {
+	expiryHeight, err := decodeVarInt(r)
+	if err != nil {
 		return err
 	}
-	if err := binary.Read(r, binary.LittleEndian, &g.CoinType); err != nil {
+	g.ExpiryHeight = uint32(expiryHeight)
+
+	coinType, err := decodeVarInt(r)
+	if err != nil {
 		return err
 	}
+	g.CoinType = uint32(coinType)
 
 	var modifiable [1]byte
 	if _, err := r.Read(modifiable[:]); err != nil {
@@ -668,24 +697,27 @@ func decodeTransparentInput(r io.Reader, ti *TransparentInput) error {
 	if _, err := io.ReadFull(r, ti.PrevoutTxID[:]); err != nil {
 		return err
 	}
-	if err := binary.Read(r, binary.LittleEndian, &ti.PrevoutIndex); err != nil {
+	prevoutIndex, err := decodeVarInt(r)
+	if err != nil {
 		return err
 	}
+	ti.PrevoutIndex = uint32(prevoutIndex)
 
 	// Decode optional fields
-	ti.Sequence = decodeOption32(r)
-	ti.RequiredTimeLockTime = decodeOption32(r)
-	ti.RequiredHeightLockTime = decodeOption32(r)
+	ti.Sequence = decodeOptionVarInt(r)
+	ti.RequiredTimeLockTime = decodeOptionVarInt(r)
+	ti.RequiredHeightLockTime = decodeOptionVarInt(r)
 
-	var err error
 	ti.ScriptSig, err = decodeOptionBytes(r)
 	if err != nil {
 		return err
 	}
 
-	if err := binary.Read(r, binary.LittleEndian, &ti.Value); err != nil {
+	value, err := decodeVarInt(r)
+	if err != nil {
 		return err
 	}
+	ti.Value = value
 
 	ti.ScriptPubKey, err = decodeBytes(r)
 	if err != nil {
@@ -779,11 +811,12 @@ func decodeTransparentInput(r io.Reader, ti *TransparentInput) error {
 }
 
 func decodeTransparentOutput(r io.Reader, to *TransparentOutput) error {
-	if err := binary.Read(r, binary.LittleEndian, &to.Value); err != nil {
+	value, err := decodeVarInt(r)
+	if err != nil {
 		return err
 	}
+	to.Value = value
 
-	var err error
 	to.ScriptPubKey, err = decodeBytes(r)
 	if err != nil {
 		return err
@@ -854,8 +887,17 @@ func decodeSaplingBundle(r io.Reader, sb *SaplingBundle) error {
 		return fmt.Errorf("expected empty Sapling outputs")
 	}
 
-	if err := binary.Read(r, binary.LittleEndian, &sb.ValueSum); err != nil {
+	// Sapling ValueBalance is i128, encoded as zigzag varint
+	// zigzag: positive n -> 2n, negative n -> 2|n| - 1
+	// decode: if zigzag is even, value = zigzag/2; if odd, value = -(zigzag+1)/2
+	zigzag, err := decodeVarInt(r)
+	if err != nil {
 		return err
+	}
+	if zigzag&1 == 0 {
+		sb.ValueSum = int64(zigzag / 2)
+	} else {
+		sb.ValueSum = -int64((zigzag + 1) / 2)
 	}
 
 	if _, err := io.ReadFull(r, sb.Anchor[:]); err != nil {
@@ -893,9 +935,12 @@ func decodeOrchardBundle(r io.Reader, ob *OrchardBundle) error {
 	}
 	ob.Flags = flags[0]
 
-	if err := binary.Read(r, binary.LittleEndian, &ob.ValueSum.Magnitude); err != nil {
+	// ValueBalance is encoded as (varint magnitude, bool sign)
+	magnitude, err := decodeVarInt(r)
+	if err != nil {
 		return err
 	}
+	ob.ValueSum.Magnitude = magnitude
 
 	var isNeg [1]byte
 	if _, err := r.Read(isNeg[:]); err != nil {
@@ -925,18 +970,8 @@ func decodeOrchardBundle(r io.Reader, ob *OrchardBundle) error {
 		ob.Bsk = &bsk
 	}
 
-	// Option<[u8; 64]> for BindingSig
-	var hasBindingSig [1]byte
-	if _, err := r.Read(hasBindingSig[:]); err != nil {
-		return err
-	}
-	if hasBindingSig[0] == 0x01 {
-		var bindingSig [64]byte
-		if _, err := io.ReadFull(r, bindingSig[:]); err != nil {
-			return err
-		}
-		ob.BindingSig = &bindingSig
-	}
+	// Note: BindingSig is NOT part of the PCZT format - it's computed during
+	// transaction extraction and goes directly into the final transaction.
 
 	return nil
 }
@@ -1105,14 +1140,30 @@ func decodeOption32(r io.Reader) *uint32 {
 	return nil
 }
 
+func decodeOptionVarInt(r io.Reader) *uint32 {
+	var hasValue [1]byte
+	if _, err := r.Read(hasValue[:]); err != nil {
+		return nil
+	}
+	if hasValue[0] == 0x01 {
+		val, err := decodeVarInt(r)
+		if err != nil {
+			return nil
+		}
+		v := uint32(val)
+		return &v
+	}
+	return nil
+}
+
 func decodeOptionU64(r io.Reader) *uint64 {
 	var hasValue [1]byte
 	if _, err := r.Read(hasValue[:]); err != nil {
 		return nil
 	}
 	if hasValue[0] == 0x01 {
-		var val uint64
-		if err := binary.Read(r, binary.LittleEndian, &val); err != nil {
+		val, err := decodeVarInt(r)
+		if err != nil {
 			return nil
 		}
 		return &val
@@ -1198,9 +1249,11 @@ func decodeOptionWitness(r io.Reader) (*MerkleWitness, error) {
 	}
 	if hasValue[0] == 0x01 {
 		var mw MerkleWitness
-		if err := binary.Read(r, binary.LittleEndian, &mw.Position); err != nil {
+		pos, err := decodeVarInt(r)
+		if err != nil {
 			return nil, err
 		}
+		mw.Position = uint32(pos)
 		for i := 0; i < 32; i++ {
 			if _, err := io.ReadFull(r, mw.Path[i][:]); err != nil {
 				return nil, err
@@ -1235,9 +1288,11 @@ func decodeZip32Derivation(r io.Reader) (*Zip32Derivation, error) {
 
 	zd.DerivationPath = make([]uint32, pathLen)
 	for i := uint64(0); i < pathLen; i++ {
-		if err := binary.Read(r, binary.LittleEndian, &zd.DerivationPath[i]); err != nil {
+		idx, err := decodeVarInt(r)
+		if err != nil {
 			return nil, err
 		}
+		zd.DerivationPath[i] = uint32(idx)
 	}
 
 	return &zd, nil

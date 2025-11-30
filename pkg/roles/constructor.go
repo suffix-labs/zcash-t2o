@@ -128,26 +128,58 @@ func (c *Constructor) AddOrchardOutput(
 		return fmt.Errorf("shielded outputs not modifiable")
 	}
 
-	// Generate random values for the output
-	rseed := generateRandomness32()
-	rho := generateRandomness32()
-	rcv := generateRandomness32()
+	// Create dummy spend with all cryptographically consistent values via FFI.
+	// This generates: nullifier, rk, alpha, fvk, recipient, rho, rseed, witness, dummy_sk
+	// All values are internally consistent (nullifier derived from note, etc.)
+	dummySpendData, err := ffi.OrchardCreateDummySpend()
+	if err != nil {
+		return fmt.Errorf("failed to create dummy spend: %w", err)
+	}
 
-	// Create dummy spend for the action (uses rho as nullifier base)
-	dummySpend := c.createDummySpend(rho)
+	// The output note's rho must be Rho::from_nf_old(spend.nullifier)
+	// In Orchard, rho = nullifier bytes (they're both Pallas base elements)
+	outputRho := dummySpendData.Nullifier
+
+	// Generate random rseed for the output note (different from spend's rseed)
+	outputRseed := generateRandomness32()
+
+	// Generate a valid rcv (Pallas scalar) via FFI for the value commitment
+	rcv, err := ffi.OrchardGenerateRcv()
+	if err != nil {
+		return fmt.Errorf("failed to generate rcv: %w", err)
+	}
 
 	// Encrypt note and get cmx + epk via FFI
 	// This single call handles: note creation, commitment, encryption, and ephemeral key
 	encCiphertext, outCiphertext, ephemeralKey, cmx, err := ffi.OrchardEncryptNote(
 		recipient,
 		value,
-		rho,
-		rseed,
+		outputRho,
+		outputRseed,
 		memo,
 		rcv,
 	)
 	if err != nil {
 		return fmt.Errorf("note encryption failed: %w", err)
+	}
+
+	// Build dummy spend from FFI data
+	zeroValue := uint64(0)
+	dummySpend := pczt.OrchardSpend{
+		Nullifier: dummySpendData.Nullifier,
+		Rk:        dummySpendData.Rk,
+		Value:     &zeroValue,
+		Rho:       &dummySpendData.Rho,
+		Rseed:     &dummySpendData.Rseed,
+		Recipient: &dummySpendData.Recipient,
+		Alpha:     &dummySpendData.Alpha,
+		Fvk:       &dummySpendData.Fvk,
+		Witness: &pczt.MerkleWitness{
+			Position: dummySpendData.WitnessPosition,
+			Path:     dummySpendData.WitnessPath,
+		},
+		DummySk:     &dummySpendData.DummySk,
+		Proprietary: make(map[string][]byte),
 	}
 
 	// Create output
@@ -158,7 +190,7 @@ func (c *Constructor) AddOrchardOutput(
 		OutCiphertext: outCiphertext,
 		Recipient:     &recipient,
 		Value:         &value,
-		Rseed:         &rseed,
+		Rseed:         &outputRseed,
 		Proprietary:   make(map[string][]byte),
 	}
 
@@ -180,40 +212,6 @@ func (c *Constructor) AddOrchardOutput(
 	c.pczt.Orchard.ValueSum.IsNegative = false // Positive balance
 
 	return nil
-}
-
-// createDummySpend creates a dummy spend for an output-only action.
-//
-// In Orchard, every action must have both a spend and an output. When we're
-// only creating outputs (transparent -> Orchard), we create "dummy spends"
-// that don't actually consume any notes. The dummy spend has:
-//   - A synthetic nullifier (derived from randomness)
-//   - Zero value
-//   - A temporary spending key (will be cleared by IO Finalizer)
-func (c *Constructor) createDummySpend(rho [32]byte) pczt.OrchardSpend {
-	// Generate dummy spending key (will be used to sign, then cleared)
-	dummySk := generateRandomness32()
-
-	// Derive dummy nullifier from rho
-	nullifier := deriveNullifier(rho, dummySk)
-
-	// Generate alpha (spend auth randomizer)
-	alpha := generateRandomness32()
-
-	// Derive rk (randomized verification key)
-	rk := deriveRandomizedKey(dummySk, alpha)
-
-	zeroValue := uint64(0)
-
-	return pczt.OrchardSpend{
-		Nullifier:   nullifier,
-		Rk:          rk,
-		Value:       &zeroValue,
-		Rho:         &rho,
-		Alpha:       &alpha,
-		DummySk:     &dummySk,
-		Proprietary: make(map[string][]byte),
-	}
 }
 
 // Finish returns the constructed PCZT.
@@ -284,8 +282,13 @@ func deriveNullifier(rho [32]byte, sk [32]byte) [32]byte {
 	nf, err := ffi.OrchardDeriveNullifier(rho, sk)
 	if err != nil {
 		// Current Orchard API doesn't expose standalone nullifier derivation
-		// For dummy spends, generate a random nullifier (acceptable for synthetic spends)
-		return generateRandomness32()
+		// For dummy spends, generate a valid dummy nullifier (must be valid Pallas base element)
+		dummyNf, err := ffi.OrchardGenerateDummyNullifier()
+		if err != nil {
+			// Should never happen, but fallback to generating from rho derivation function
+			dummyNf, _ = ffi.OrchardGenerateDummyRho()
+		}
+		return dummyNf
 	}
 	return nf
 }

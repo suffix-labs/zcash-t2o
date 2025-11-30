@@ -120,6 +120,9 @@ type ParseError struct {
 }
 
 func (e *ParseError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("parse error: %s: %v", e.Message, e.Cause)
+	}
 	return fmt.Sprintf("parse error: %s", e.Message)
 }
 

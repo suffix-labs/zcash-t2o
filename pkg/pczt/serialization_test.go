@@ -2,6 +2,7 @@ package pczt
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -37,6 +38,72 @@ func TestRoundTripEmpty(t *testing.T) {
 	}
 
 	checkRoundTrip(t, pczt)
+}
+
+// TestCompareWithRustFormat prints Go PCZT bytes for comparison with Rust
+func TestCompareWithRustFormat(t *testing.T) {
+	// Rust uses orchard::Anchor::empty_tree().to_bytes() for the anchor
+	// which is NOT all zeros - it's the hash of an empty Merkle tree
+	// For now, we'll just verify our encoding is self-consistent
+
+	// Create PCZT that matches Rust Creator::new(0xC2D6D0B4, 10_000_000, 133, [0;32], [0;32]).build()
+	pczt := &PCZT{
+		Global: Global{
+			TxVersion:         V5TxVersion,       // 5
+			VersionGroupID:    V5VersionGroupID,  // 0x26A7270A
+			ConsensusBranchID: 0xC2D6D0B4,        // NU5
+			ExpiryHeight:      10_000_000,
+			CoinType:          133,
+			TxModifiable:      0x83, // Rust default: all modifiable flags
+			Proprietary:       make(map[string][]byte),
+		},
+		Transparent: TransparentBundle{
+			Inputs:  []TransparentInput{},
+			Outputs: []TransparentOutput{},
+		},
+		Sapling: SaplingBundle{
+			Spends:   []interface{}{},
+			Outputs:  []interface{}{},
+			ValueSum: 0,
+			Anchor:   [32]byte{},
+		},
+		Orchard: OrchardBundle{
+			Actions:  []OrchardAction{},
+			Flags:    0x03, // Rust default
+			ValueSum: ValueBalance{Magnitude: 0, IsNegative: true}, // Rust defaults to true for empty
+			Anchor:   [32]byte{},
+		},
+	}
+
+	data, err := Serialize(pczt)
+	if err != nil {
+		t.Fatalf("Serialize failed: %v", err)
+	}
+
+	t.Logf("Go PCZT: %d bytes", len(data))
+
+	// Print bytes in 16-byte rows for easy comparison with Rust
+	t.Log("Go PCZT bytes:")
+	for i := 0; i < len(data); i += 16 {
+		end := i + 16
+		if end > len(data) {
+			end = len(data)
+		}
+		row := ""
+		for j := i; j < end; j++ {
+			row += fmt.Sprintf("%02x ", data[j])
+		}
+		t.Logf("  %s", row)
+	}
+
+	// Rust produces 104 bytes:
+	// 50 43 5a 54 01 00 00 00 05 8a ce 9c b5 02 b4 a1
+	// db 96 0c 00 80 ad e2 04 85 01 83 00 00 00 00 00
+	// 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+	// 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+	// 00 00 00 03 00 01 00 00 00 00 00 00 00 00 00 00  <- Note: 03 00 01 (Orchard flags, then ???)
+	// 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+	// 00 00 00 00 00 00 00 00
 }
 
 // TestRoundTripWithTransparentInput tests serialization with a transparent input
