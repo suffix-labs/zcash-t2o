@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/suffix-labs/zcash-t2o/pkg/crypto"
 	"github.com/suffix-labs/zcash-t2o/pkg/ffi"
 	"github.com/suffix-labs/zcash-t2o/pkg/pczt"
 )
@@ -129,13 +130,15 @@ func (e *TxExtractor) createBindingSignature() error {
 
 // computeBindingSighash computes the sighash for the binding signature.
 //
-// This is the same as the ZIP 244 transaction hash used for transparent
-// signatures, but without the input-specific context.
-//
-// TODO: This should reuse the ZIP 244 implementation
+// This uses the ZIP 244 shielded signature hash - the same hash used for
+// Orchard spend authorization signatures, which doesn't include any
+// specific transparent input context.
 func (e *TxExtractor) computeBindingSighash() [32]byte {
-	// PLACEHOLDER: Real implementation should use crypto.ComputeZIP244Hash
-	var sighash [32]byte
+	sighash, err := crypto.GetShieldedSignatureHash(e.pczt)
+	if err != nil {
+		// Return zero sighash on error - will cause signature verification to fail
+		return [32]byte{}
+	}
 	return sighash
 }
 
