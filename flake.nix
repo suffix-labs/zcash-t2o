@@ -25,6 +25,7 @@
             lldb
             pkg-config
             gcc
+            zcash
           ];
 
           shellHook = ''
