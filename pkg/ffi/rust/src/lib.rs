@@ -20,9 +20,13 @@ use std::sync::OnceLock;
 use orchard::{
     keys::{SpendAuthorizingKey, SpendingKey},
     note::{ExtractedNoteCommitment, RandomSeed, Rho},
+    note_encryption::{OrchardDomain, OrchardNoteEncryption},
     value::{NoteValue, ValueCommitTrapdoor, ValueCommitment},
     Address, Note,
 };
+
+// Note encryption traits
+use zcash_note_encryption::Domain;
 
 // Pallas curve imports
 use group::ff::PrimeField;
@@ -318,27 +322,127 @@ pub unsafe extern "C" fn ffi_orchard_ephemeral_key(
 
 /// Encrypt Orchard note
 ///
+/// Creates an encrypted note including:
+/// - enc_ciphertext (580 bytes) - encrypted note for recipient
+/// - out_ciphertext (80 bytes) - encrypted data for sender recovery
+/// - epk (32 bytes) - ephemeral public key
+/// - cmx (32 bytes) - note commitment
+///
 /// # Safety
 /// - All pointer parameters must point to valid arrays of the specified size
 #[no_mangle]
 pub unsafe extern "C" fn ffi_orchard_encrypt_note(
-    recipient: *const u8,           // [43]
-    _value: u64,
-    rseed: *const u8,               // [32]
-    memo: *const u8,                // [512]
-    esk: *const u8,                 // [32]
-    epk: *const u8,                 // [32]
-    enc_ciphertext_out: *mut u8,    // [580]
-    out_ciphertext_out: *mut u8,    // [80]
+    recipient: *const u8,           // [43] - Orchard address
+    value: u64,                     // Note value in zatoshis
+    rho: *const u8,                 // [32] - Nullifier base (from dummy spend or prior note)
+    rseed: *const u8,               // [32] - Random seed for note
+    memo: *const u8,                // [512] - Memo field
+    rcv: *const u8,                 // [32] - Value commitment randomness
+    enc_ciphertext_out: *mut u8,    // [580] - Output: encrypted note
+    out_ciphertext_out: *mut u8,    // [80] - Output: outgoing ciphertext
+    epk_out: *mut u8,               // [32] - Output: ephemeral public key
+    cmx_out: *mut u8,               // [32] - Output: note commitment
 ) -> FFIErrorCode {
-    if recipient.is_null() || rseed.is_null() || memo.is_null() ||
-       esk.is_null() || epk.is_null() || enc_ciphertext_out.is_null() ||
-       out_ciphertext_out.is_null() {
+    if recipient.is_null() || rho.is_null() || rseed.is_null() || memo.is_null() ||
+       rcv.is_null() || enc_ciphertext_out.is_null() || out_ciphertext_out.is_null() ||
+       epk_out.is_null() || cmx_out.is_null() {
         return FFIErrorCode::NullPointer;
     }
 
-    set_last_error("Note encryption not implemented: requires zcash_note_encryption with OrchardDomain setup".to_string());
-    FFIErrorCode::OrchardCryptoFailed
+    // Parse recipient address (43 bytes: diversifier + pk_d)
+    let recipient_bytes = slice::from_raw_parts(recipient, 43);
+    let mut recipient_arr = [0u8; 43];
+    recipient_arr.copy_from_slice(recipient_bytes);
+
+    let address = match Address::from_raw_address_bytes(&recipient_arr).into() {
+        Some(addr) => addr,
+        None => {
+            set_last_error("Invalid Orchard address".to_string());
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
+
+    // Parse rho (nullifier base)
+    let rho_bytes = slice::from_raw_parts(rho, 32);
+    let mut rho_arr = [0u8; 32];
+    rho_arr.copy_from_slice(rho_bytes);
+    let rho_val: Rho = match Rho::from_bytes(&rho_arr).into() {
+        Some(r) => r,
+        None => {
+            set_last_error("Invalid rho value".to_string());
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
+
+    // Parse random seed
+    let rseed_bytes = slice::from_raw_parts(rseed, 32);
+    let mut rseed_arr = [0u8; 32];
+    rseed_arr.copy_from_slice(rseed_bytes);
+    let random_seed: RandomSeed = match RandomSeed::from_bytes(rseed_arr, &rho_val).into() {
+        Some(rs) => rs,
+        None => {
+            set_last_error("Invalid random seed".to_string());
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
+
+    // Parse value
+    let note_value = NoteValue::from_raw(value);
+
+    // Create note
+    let note: Note = match Note::from_parts(address, note_value, rho_val, random_seed).into() {
+        Some(n) => n,
+        None => {
+            set_last_error("Invalid note parameters".to_string());
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
+
+    // Compute note commitment
+    let cmx: ExtractedNoteCommitment = note.commitment().into();
+
+    // Parse memo
+    let memo_bytes = slice::from_raw_parts(memo, 512);
+    let mut memo_arr = [0u8; 512];
+    memo_arr.copy_from_slice(memo_bytes);
+
+    // Parse rcv for value commitment
+    let rcv_bytes = slice::from_raw_parts(rcv, 32);
+    let mut rcv_arr = [0u8; 32];
+    rcv_arr.copy_from_slice(rcv_bytes);
+    let rcv_trapdoor: ValueCommitTrapdoor = match ValueCommitTrapdoor::from_bytes(rcv_arr).into() {
+        Some(t) => t,
+        None => {
+            set_last_error("Invalid value commitment randomness".to_string());
+            return FFIErrorCode::OrchardCryptoFailed;
+        }
+    };
+
+    // Compute value commitment (needed for outgoing ciphertext)
+    let zero = NoteValue::from_raw(0);
+    let value_sum = note_value - zero;
+    let cv_net: ValueCommitment = ValueCommitment::derive(value_sum, rcv_trapdoor);
+
+    // Create note encryption (without OVK for T2O - we don't need sender recovery)
+    // For T2O transactions, we use None for OVK since the sender is transparent
+    let encryptor = OrchardNoteEncryption::new(None, note, memo_arr);
+
+    // Get ephemeral public key using Domain trait
+    let epk_bytes = OrchardDomain::epk_bytes(encryptor.epk());
+
+    // Encrypt note plaintext (580 bytes)
+    let enc_ciphertext = encryptor.encrypt_note_plaintext();
+
+    // Encrypt outgoing plaintext (80 bytes)
+    let out_ciphertext = encryptor.encrypt_outgoing_plaintext(&cv_net, &cmx, &mut OsRng);
+
+    // Copy outputs
+    ptr::copy_nonoverlapping(enc_ciphertext.as_ref().as_ptr(), enc_ciphertext_out, 580);
+    ptr::copy_nonoverlapping(out_ciphertext.as_ptr(), out_ciphertext_out, 80);
+    ptr::copy_nonoverlapping(epk_bytes.as_ref().as_ptr(), epk_out, 32);
+    ptr::copy_nonoverlapping(cmx.to_bytes().as_ptr(), cmx_out, 32);
+
+    FFIErrorCode::Ok
 }
 
 /// Compute Orchard value commitment

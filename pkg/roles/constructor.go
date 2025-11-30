@@ -117,8 +117,7 @@ func (c *Constructor) AddTransparentOutput(
 //   - The actual output with encrypted note
 //   - Value commitment and note commitment
 //
-// The cryptographic operations (note encryption, commitments) are currently
-// TODO and will be implemented via Rust FFI to the Orchard crate.
+// All cryptographic operations are performed via Rust FFI to the Orchard crate.
 func (c *Constructor) AddOrchardOutput(
 	recipient [43]byte,
 	value uint64,
@@ -134,29 +133,22 @@ func (c *Constructor) AddOrchardOutput(
 	rho := generateRandomness32()
 	rcv := generateRandomness32()
 
-	// TODO: Implement Orchard cryptographic operations
-	// These will be implemented via Rust FFI to the orchard crate
-	// For now, these are placeholder implementations
+	// Create dummy spend for the action (uses rho as nullifier base)
+	dummySpend := c.createDummySpend(rho)
 
-	// Create note commitment (cmx)
-	cmx := deriveNoteCommitment(recipient, value, rseed, rho)
-
-	// Generate ephemeral key pair
-	esk := generateRandomness32()
-	ephemeralKey := deriveEphemeralKey(esk)
-
-	// Encrypt note plaintext
-	encCiphertext, outCiphertext := encryptNote(
+	// Encrypt note and get cmx + epk via FFI
+	// This single call handles: note creation, commitment, encryption, and ephemeral key
+	encCiphertext, outCiphertext, ephemeralKey, cmx, err := ffi.OrchardEncryptNote(
 		recipient,
 		value,
+		rho,
 		rseed,
 		memo,
-		esk,
-		ephemeralKey,
+		rcv,
 	)
-
-	// Create dummy spend for the action
-	dummySpend := c.createDummySpend(rho)
+	if err != nil {
+		return fmt.Errorf("note encryption failed: %w", err)
+	}
 
 	// Create output
 	output := pczt.OrchardOutput{
@@ -170,7 +162,7 @@ func (c *Constructor) AddOrchardOutput(
 		Proprietary:   make(map[string][]byte),
 	}
 
-	// Create action (spend + output)
+	// Compute value commitment via FFI
 	cvNet := computeValueCommitment(value, rcv)
 
 	action := pczt.OrchardAction{
@@ -251,62 +243,18 @@ func generateRandomness32() [32]byte {
 	return r
 }
 
+// NOTE: The following functions are kept for potential future use but are no longer
+// used in the main flow. The new OrchardEncryptNote FFI function handles note
+// commitment, ephemeral key derivation, and encryption in a single call.
+
 // deriveNoteCommitment computes the Orchard note commitment.
-//
-// Calls into Rust FFI for actual Pallas curve operations.
-// Corresponds to: orchard::note::Note::commitment() in librustzcash
+// This is now handled by OrchardEncryptNote but kept for standalone use cases.
 func deriveNoteCommitment(recipient [43]byte, value uint64, rseed [32]byte, rho [32]byte) [32]byte {
 	cmx, err := ffi.OrchardNoteCommitment(recipient, value, rseed, rho)
 	if err != nil {
-		// Log error but return zero commitment - caller should validate
-		// In production, this should propagate the error
 		return [32]byte{}
 	}
 	return cmx
-}
-
-// deriveEphemeralKey derives an ephemeral public key from a secret.
-//
-// NOTE: The Orchard crate API changed - ephemeral key derivation is now
-// handled internally during note encryption. This function attempts the FFI
-// call but may need to be integrated into the encryption flow.
-// Corresponds to: orchard key agreement on Pallas curve
-func deriveEphemeralKey(esk [32]byte) [32]byte {
-	epk, err := ffi.OrchardEphemeralKey(esk)
-	if err != nil {
-		// Current Orchard API doesn't expose standalone ephemeral key derivation
-		// Return zero - encryption will need to handle this internally
-		return [32]byte{}
-	}
-	return epk
-}
-
-// encryptNote encrypts the note plaintext and outgoing ciphertext.
-//
-// Calls into Rust FFI for ChaCha20Poly1305 encryption.
-// Corresponds to: orchard::note_encryption in librustzcash
-//
-// Returns:
-//   - encCiphertext: 580 bytes (encrypted for recipient)
-//   - outCiphertext: 80 bytes (encrypted for sender to recover)
-//
-// NOTE: This FFI function is not yet fully implemented in Rust.
-// It requires zcash_note_encryption with OrchardDomain setup.
-func encryptNote(
-	recipient [43]byte,
-	value uint64,
-	rseed [32]byte,
-	memo [512]byte,
-	esk [32]byte,
-	epk [32]byte,
-) ([]byte, []byte) {
-	encCiphertext, outCiphertext, err := ffi.OrchardEncryptNote(recipient, value, rseed, memo, esk, epk)
-	if err != nil {
-		// FFI not yet implemented - return placeholder zeros
-		// This is a critical blocker that needs Rust implementation
-		return make([]byte, 580), make([]byte, 80)
-	}
-	return encCiphertext, outCiphertext
 }
 
 // computeValueCommitment computes a Pedersen commitment to the value.

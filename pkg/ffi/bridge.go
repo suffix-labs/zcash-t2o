@@ -65,12 +65,14 @@ FFIErrorCode ffi_orchard_ephemeral_key(
 FFIErrorCode ffi_orchard_encrypt_note(
     const uint8_t recipient[43],
     uint64_t value,
+    const uint8_t rho[32],
     const uint8_t rseed[32],
     const uint8_t memo[512],
-    const uint8_t esk[32],
-    const uint8_t epk[32],
+    const uint8_t rcv[32],
     uint8_t enc_ciphertext_out[580],
-    uint8_t out_ciphertext_out[80]
+    uint8_t out_ciphertext_out[80],
+    uint8_t epk_out[32],
+    uint8_t cmx_out[32]
 );
 
 FFIErrorCode ffi_orchard_value_commitment(
@@ -253,45 +255,53 @@ func OrchardEphemeralKey(esk [32]byte) ([32]byte, error) {
 
 // OrchardEncryptNote encrypts an Orchard note.
 //
+// This function creates a complete encrypted note including the note commitment
+// and ephemeral public key. It replaces the need to call separate functions for
+// commitment derivation and ephemeral key generation.
+//
 // Parameters:
 //   - recipient: 43-byte Orchard address
 //   - value: Note value in zatoshis
-//   - rseed: 32-byte random seed
+//   - rho: 32-byte nullifier base (from dummy spend)
+//   - rseed: 32-byte random seed for note
 //   - memo: 512-byte memo field
-//   - esk: 32-byte ephemeral secret key
-//   - epk: 32-byte ephemeral public key
+//   - rcv: 32-byte value commitment randomness
 //
 // Returns:
 //   - 580-byte encrypted ciphertext
 //   - 80-byte outgoing ciphertext
+//   - 32-byte ephemeral public key
+//   - 32-byte note commitment (cmx)
 //   - Error if encryption fails
 func OrchardEncryptNote(
 	recipient [43]byte,
 	value uint64,
+	rho [32]byte,
 	rseed [32]byte,
 	memo [512]byte,
-	esk [32]byte,
-	epk [32]byte,
-) ([]byte, []byte, error) {
-	encCiphertext := make([]byte, 580)
-	outCiphertext := make([]byte, 80)
+	rcv [32]byte,
+) (encCiphertext []byte, outCiphertext []byte, epk [32]byte, cmx [32]byte, err error) {
+	encCiphertext = make([]byte, 580)
+	outCiphertext = make([]byte, 80)
 
 	code := C.ffi_orchard_encrypt_note(
 		(*C.uint8_t)(unsafe.Pointer(&recipient[0])),
 		C.uint64_t(value),
+		(*C.uint8_t)(unsafe.Pointer(&rho[0])),
 		(*C.uint8_t)(unsafe.Pointer(&rseed[0])),
 		(*C.uint8_t)(unsafe.Pointer(&memo[0])),
-		(*C.uint8_t)(unsafe.Pointer(&esk[0])),
-		(*C.uint8_t)(unsafe.Pointer(&epk[0])),
+		(*C.uint8_t)(unsafe.Pointer(&rcv[0])),
 		(*C.uint8_t)(unsafe.Pointer(&encCiphertext[0])),
 		(*C.uint8_t)(unsafe.Pointer(&outCiphertext[0])),
+		(*C.uint8_t)(unsafe.Pointer(&epk[0])),
+		(*C.uint8_t)(unsafe.Pointer(&cmx[0])),
 	)
 
 	if code != C.FFI_OK {
-		return nil, nil, getLastError(code)
+		return nil, nil, [32]byte{}, [32]byte{}, getLastError(code)
 	}
 
-	return encCiphertext, outCiphertext, nil
+	return encCiphertext, outCiphertext, epk, cmx, nil
 }
 
 // OrchardValueCommitment computes an Orchard value commitment.
