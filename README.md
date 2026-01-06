@@ -1,5 +1,7 @@
 # zcash-t2o
 
+## NOTE FOR READERS: this was a hackathon project that I vibecoded for fun. It probably doesnt work. Enjoy!
+
 **Transparent-to-Orchard PCZT Library for Go**
 
 A Go implementation of PCZT (Partially Created Zcash Transaction) based on [ZIP 374](https://github.com/zcash/zips/pull/1063), enabling Bitcoin-style wallets to send shielded Orchard outputs.
